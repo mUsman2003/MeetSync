@@ -314,11 +314,25 @@
      * Handles grouped messages (multiple messages under one sender).
      */
     function scanChatMessages() {
-      // Primary chat container selector — targets the scrollable message list
-      // Google Meet wraps messages in elements with data-message-id
-      const messageContainers = document.querySelectorAll(
-        '[data-message-id], [jsname="xySENc"] [data-sender-id]'
+      // Prefer scanning within the chat panel/list to avoid matching unrelated listitems.
+      const chatPanel = document.querySelector(
+        '[aria-label*="chat" i][role="complementary"], [data-panel-type="chat"], [aria-label*="chat" i]'
       );
+
+      let messageContainers = [];
+      if (chatPanel) {
+        const chatList =
+          chatPanel.querySelector('[aria-label*="chat messages" i], [role="log"], [role="list"]') ||
+          chatPanel;
+        messageContainers = Array.from(
+          chatList.querySelectorAll('[data-message-id], [role="listitem"], [data-sender-id]')
+        );
+      } else {
+        // Fallback: global selectors (less reliable)
+        messageContainers = Array.from(
+          document.querySelectorAll('[data-message-id], [jsname="xySENc"] [data-sender-id], [role="listitem"]')
+        );
+      }
   
       if (messageContainers.length === 0) {
         // Fallback: try to find the chat panel by its ARIA role
@@ -356,8 +370,15 @@
   
       // Find all text message nodes — individual message bubbles within a group
       // Meet groups multiple messages from the same sender under one header
-      // Prefer stable selectors; broad class* matches can accidentally capture sender/name spans.
-      const textNodes = container.querySelectorAll('[data-message-text], [jsname="r4nke"]');
+      // Prefer stable selectors first.
+      let textNodes = container.querySelectorAll('[data-message-text], [jsname="r4nke"]');
+      // Secondary fallback (some Meet builds don't use the attributes above).
+      // Keep it narrower than the old broad selectors by excluding buttons/menus.
+      if (textNodes.length === 0) {
+        textNodes = container.querySelectorAll(
+          'div[class*="message" i] span, span[class*="message" i], div[dir="auto"] span'
+        );
+      }
   
       const messageTextSamples = Array.from(textNodes)
         .map(n => (n.textContent || "").replace(/\u202F/g, " ").trim())
