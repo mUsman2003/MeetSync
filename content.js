@@ -9,11 +9,13 @@
   
     // ─── State ────────────────────────────────────────────────────────────────
     const seenIds = new Set();       // Deduplication set
+    const recentSystemTexts = new Map(); // text -> lastSeenMs
     let debounceTimer = null;        // Scan debounce handle
     let currentMeetingId = null;     // Active meeting ID from URL
     let chatPanelOpen = false;       // Track chat panel state
     let observer = null;             // MutationObserver instance
     let systemObserver = null;       // Observer for system popups
+    let localUserName = null;        // Cached display name for "You" / self messages
   
     // ─── Helpers ──────────────────────────────────────────────────────────────
   
@@ -70,6 +72,12 @@
       return `chat_${hashString(fingerprint)}`;
     }
   
+    function makeEventId({ time, text }) {
+      const timeN = normalizeForId(time);
+      const textN = normalizeForId(text);
+      return `event_${hashString(`${timeN}|${textN}`)}`;
+    }
+  
     /**
      * Filters out Meet UI noise strings from text nodes.
      */
@@ -86,7 +94,7 @@
   
       // Meet sometimes concatenates UI strings (e.g. "keepPin message").
       const squashed = raw.replace(/\s+/g, "").replace(/[^a-z]/g, "");
-      const noiseSquashed = [
+      const noiseTokens = [
         "keep",
         "pinmessage",
         "unpinmessage",
@@ -99,7 +107,13 @@
         "react",
         "removereaction"
       ];
-      return noiseSquashed.some(n => squashed === n || squashed.includes(n));
+  
+      // Safe: only treat as noise if the whole string is made of noise tokens.
+      // This avoids filtering legitimate messages that merely contain substrings
+      // like "keep" (e.g., "keep going").
+      const tokenUnion = noiseTokens.join("|");
+      const noiseOnly = new RegExp(`^(?:${tokenUnion})+$`, "i");
+      return noiseOnly.test(squashed);
     }
 
     function cleanMessageText(text, senderName) {
@@ -115,11 +129,74 @@
         .filter(p => !parseTime(p))
         .filter(p => !senderN || p !== senderN);
   
-      const cleaned = parts.join(" ").replace(/\s+/g, " ").trim();
+      let cleaned = parts.join(" ").replace(/\s+/g, " ").trim();
+  
+      // Strip UI action junk that sometimes gets appended to the end of text
+      // like: "usman keepPin message"
+      const tailNoise = [
+        "keep",
+        "pin message",
+        "unpin message",
+        "more options",
+        "reply",
+        "copy link",
+        "report",
+        "delete",
+        "edit",
+        "react",
+        "remove reaction"
+      ];
+      const tailRe = new RegExp(`(?:\\s*(?:${tailNoise.map(t => t.replace(/ /g, "\\\\s+")).join("|")}))+\\s*$`, "i");
+      cleaned = cleaned.replace(tailRe, "").trim();
+  
+      // Also handle concatenated suffixes like "keepPin message"
+      const squashed = cleaned.replace(/\s+/g, "");
+      const squashedTailRe = new RegExp(`(?:keep|pinmessage|unpinmessage|moreoptions|reply|copylink|report|delete|edit|react|removereaction)+$`, "i");
+      if (squashedTailRe.test(squashed)) {
+        // If the entire string is just noise, drop it; otherwise keep original cleaned (best effort)
+        const onlyNoise = new RegExp(`^(?:keep|pinmessage|unpinmessage|moreoptions|reply|copylink|report|delete|edit|react|removereaction)+$`, "i");
+        if (onlyNoise.test(squashed)) return "";
+      }
+  
       return cleaned;
     }
 
-    function pickBestSenderName(container) {
+    function getLocalUserName() {
+      if (localUserName) return localUserName;
+  
+      // Common: profile/account button includes "Google Account: Name"
+      const accountEl = document.querySelector(
+        '[aria-label^="Google Account:" i], button[aria-label^="Google Account:" i], [aria-label*="Google Account:" i]'
+      );
+      const label = accountEl ? (accountEl.getAttribute("aria-label") || "") : "";
+      const m = label.match(/Google Account:\s*([^,(]+?)(?:\s*[,(]|$)/i);
+      if (m && m[1]) {
+        localUserName = m[1].trim();
+        return localUserName;
+      }
+  
+      return null;
+    }
+
+    function trySenderFromAria(container) {
+      const aria = (container.getAttribute("aria-label") || "").replace(/\u202F/g, " ").trim();
+      if (!aria) return "";
+  
+      // Heuristic: "Name 7:45 PM Message" or similar.
+      // Grab leading chunk before first time-like token.
+      const timeIdx = aria.search(/\d{1,2}:\d{2}/);
+      const head = (timeIdx > 0 ? aria.slice(0, timeIdx) : aria).trim();
+      if (!head) return "";
+  
+      // Avoid UI noise / generic labels
+      if (isNoise(head) || parseTime(head)) return "";
+  
+      // Reasonable name length
+      if (head.length < 2 || head.length > 60) return "";
+      return head;
+    }
+
+    function pickBestSenderName(container, excludeTexts = []) {
       // Prefer explicit sender name elements.
       const senderEl = container.querySelector(
         '[data-sender-name], [aria-label][class*="author" i], span[class*="sender" i]'
@@ -128,10 +205,15 @@
       if (senderText && !isNoise(senderText) && !parseTime(senderText)) return senderText;
   
       // Heuristic: pick the best candidate span text; prefer longer names over initials.
+      const exclude = new Set(
+        (excludeTexts || [])
+          .map(t => (t || "").replace(/\u202F/g, " ").trim())
+          .filter(Boolean)
+      );
       const spans = Array.from(container.querySelectorAll("span"));
       const candidates = spans
         .map(s => (s.textContent || "").replace(/\u202F/g, " ").trim())
-        .filter(t => t && !isNoise(t) && !parseTime(t) && t.length < 60);
+        .filter(t => t && !exclude.has(t) && !isNoise(t) && !parseTime(t) && t.length < 60);
   
       if (candidates.length === 0) return "";
   
@@ -214,13 +296,25 @@
       // Attempt to read sender from data attribute first, then from DOM
       const senderId = container.getAttribute("data-sender-id") || "";
       const messageId = container.getAttribute("data-message-id") || "";
-      const senderName = pickBestSenderName(container);
   
       // Find all text message nodes — individual message bubbles within a group
       // Meet groups multiple messages from the same sender under one header
       const textNodes = container.querySelectorAll(
         '[data-message-text], [jsname="r4nke"], [class*="message-text" i], [class*="messageText" i]'
       );
+  
+      const messageTextSamples = Array.from(textNodes)
+        .map(n => (n.textContent || "").replace(/\u202F/g, " ").trim())
+        .filter(Boolean);
+      let senderName = pickBestSenderName(container, messageTextSamples) || "";
+      if (!senderName) senderName = trySenderFromAria(container);
+      if (senderName && senderName.toLowerCase() === "you") {
+        senderName = getLocalUserName() || senderName;
+      }
+      if (!senderName) {
+        // If we can't find the sender, prefer local user name for self messages.
+        senderName = getLocalUserName() || "";
+      }
   
       if (textNodes.length > 0) {
         textNodes.forEach((node, msgIdx) => {
@@ -280,7 +374,7 @@
         const displayTime = parsedTime || new Date().toLocaleTimeString();
         const msgLines = lines.filter(l => !parseTime(l) && !isNoise(l));
   
-        if (msgLines.length === 0 || !senderName) return;
+        if (msgLines.length === 0) return;
   
         const text = cleanMessageText(msgLines.join(" "), senderName);
         if (!text) return;
@@ -333,13 +427,22 @@
       if (!text) return;
   
       const lower = text.toLowerCase();
-      const isJoin = lower.includes("joined") || lower.includes("joined the meeting");
-      const isLeave = lower.includes("left") || lower.includes("left the meeting");
+      const isJoin = lower.includes(" joined") || lower.endsWith(" joined") || lower.includes("joined the meeting");
+      const isLeave = lower.includes(" left") || lower.endsWith(" left") || lower.includes("left the meeting");
   
       if (!isJoin && !isLeave) return;
   
+      // Avoid huge "state" announcements that can repeat (camera/mic status etc.)
+      if (text.length > 120) return;
+  
+      // Debounce by message text (Meet often re-renders the same toast repeatedly)
+      const now = Date.now();
+      const lastSeen = recentSystemTexts.get(text) || 0;
+      if (now - lastSeen < 30000) return; // 30s
+      recentSystemTexts.set(text, now);
+  
       const timeStr = new Date().toLocaleTimeString();
-      const uniqueKey = makeId("system", timeStr, text, Date.now());
+      const uniqueKey = makeEventId({ time: "", text });
   
       // Don't re-log the same event text within 5 seconds
       if (seenIds.has(uniqueKey)) return;
