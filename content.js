@@ -224,6 +224,28 @@
       return head;
     }
 
+    function inferSenderFromContainerText(container, messageTextSamples = []) {
+      const allText = (container.textContent || "").replace(/\u202F/g, " ");
+      const msgSet = new Set(
+        (messageTextSamples || [])
+          .map(t => (t || "").replace(/\u202F/g, " ").trim())
+          .filter(Boolean)
+      );
+
+      const lines = allText
+        .split("\n")
+        .map(l => l.trim())
+        .filter(l => l && !isNoise(l) && !parseTime(l) && l.length < 60);
+
+      // The first non-noise, non-time line is often the sender label.
+      for (const line of lines) {
+        if (msgSet.has(line)) continue;
+        if (line.length < 2) continue;
+        return line;
+      }
+      return "";
+    }
+
     function pickBestSenderName(container, excludeTexts = []) {
       // Prefer explicit sender name elements.
       const senderEl = container.querySelector(
@@ -334,15 +356,15 @@
   
       // Find all text message nodes — individual message bubbles within a group
       // Meet groups multiple messages from the same sender under one header
-      const textNodes = container.querySelectorAll(
-        '[data-message-text], [jsname="r4nke"], [class*="message-text" i], [class*="messageText" i]'
-      );
+      // Prefer stable selectors; broad class* matches can accidentally capture sender/name spans.
+      const textNodes = container.querySelectorAll('[data-message-text], [jsname="r4nke"]');
   
       const messageTextSamples = Array.from(textNodes)
         .map(n => (n.textContent || "").replace(/\u202F/g, " ").trim())
         .filter(Boolean);
       let senderName = pickBestSenderName(container, messageTextSamples) || "";
       if (!senderName) senderName = trySenderFromAria(container);
+      if (!senderName) senderName = inferSenderFromContainerText(container, messageTextSamples);
       if (senderName && senderName.toLowerCase() === "you") {
         senderName = getLocalUserName() || senderName;
       }
@@ -466,6 +488,9 @@
       const isLeave = lower.includes(" left") || lower.endsWith(" left") || lower.includes("left the meeting");
   
       if (!isJoin && !isLeave) return;
+
+      // Ignore verbose self-state announcements that repeat frequently.
+      if (lower.startsWith("you have joined the call")) return;
   
       // Avoid huge "state" announcements that can repeat (camera/mic status etc.)
       if (text.length > 120) return;
