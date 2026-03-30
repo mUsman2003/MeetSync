@@ -16,6 +16,8 @@
     let observer = null;             // MutationObserver instance
     let systemObserver = null;       // Observer for system popups
     let localUserName = null;        // Cached display name for "You" / self messages
+    let extensionContextValid = true;
+    let urlWatcher = null;
   
     // ─── Helpers ──────────────────────────────────────────────────────────────
   
@@ -38,6 +40,32 @@
       const normalized = rawText.replace(/\u202F/g, " ").trim();
       const match = normalized.match(/\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?/i);
       return match ? match[0].trim() : null;
+    }
+
+    function isContextInvalidatedError(err) {
+      const msg = (err && err.message) ? String(err.message) : String(err || "");
+      return /Extension context invalidated/i.test(msg);
+    }
+
+    function isExtensionApiAvailable() {
+      return typeof chrome !== "undefined" && !!chrome.runtime && !!chrome.runtime.id;
+    }
+
+    function invalidateExtensionContext(err) {
+      if (!extensionContextValid) return;
+      extensionContextValid = false;
+      console.warn("[MeetSync] Extension context invalidated. Refresh the Meet tab.", err);
+
+      try { if (debounceTimer) clearTimeout(debounceTimer); } catch (_) {}
+      debounceTimer = null;
+
+      try { if (observer) observer.disconnect(); } catch (_) {}
+      try { if (systemObserver) systemObserver.disconnect(); } catch (_) {}
+      try { if (urlWatcher) urlWatcher.disconnect(); } catch (_) {}
+
+      observer = null;
+      systemObserver = null;
+      urlWatcher = null;
     }
   
     /**
@@ -228,6 +256,7 @@
      */
     async function saveEntry(entry) {
       try {
+        if (!extensionContextValid || !isExtensionApiAvailable()) return;
         const key = `meet_${currentMeetingId}`;
         const result = await chrome.storage.local.get([key, "activeMeetingId"]);
         const existing = result[key] || [];
@@ -244,8 +273,14 @@
         });
   
         // Notify popup if open
-        chrome.runtime.sendMessage({ type: "NEW_ENTRY", entry }).catch(() => {});
+        chrome.runtime.sendMessage({ type: "NEW_ENTRY", entry }).catch((err) => {
+          if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+        });
       } catch (err) {
+        if (isContextInvalidatedError(err)) {
+          invalidateExtensionContext(err);
+          return;
+        }
         console.warn("[MeetSync] Storage error:", err);
       }
     }
@@ -530,8 +565,10 @@
      * The 500ms delay gives Meet time to fully render message blocks.
      */
     function scheduleScan() {
+      if (!extensionContextValid) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
+        if (!extensionContextValid) return;
         detectChatPanelState();
         scanChatMessages();
         scanSystemEvents();
@@ -587,7 +624,7 @@
      * Watches for URL changes (Meet navigates without full page reload).
      */
     let lastUrl = window.location.href;
-    const urlWatcher = new MutationObserver(() => {
+    urlWatcher = new MutationObserver(() => {
       if (window.location.href !== lastUrl) {
         lastUrl = window.location.href;
         initSession();
@@ -616,11 +653,16 @@
     // ─── Bootstrap ────────────────────────────────────────────────────────────
   
     async function bootstrap() {
+      if (!isExtensionApiAvailable()) {
+        invalidateExtensionContext(new Error("Extension API not available."));
+        return;
+      }
       await initSession();
       startObserver();
       startSystemObserver();
       // Initial scan after a short delay to let the page settle
       setTimeout(() => {
+        if (!extensionContextValid) return;
         detectChatPanelState();
         scanChatMessages();
       }, 2000);
