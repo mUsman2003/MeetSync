@@ -192,6 +192,16 @@
     function getLocalUserName() {
       if (localUserName) return localUserName;
   
+      // Observed Meet DOM: current user name in header
+      const headerName = document.querySelector(".dwSJ2e");
+      if (headerName && headerName.textContent) {
+        const t = headerName.textContent.replace(/\u202F/g, " ").trim();
+        if (t) {
+          localUserName = t;
+          return localUserName;
+        }
+      }
+  
       // Common: profile/account button includes "Google Account: Name"
       const accountEl = document.querySelector(
         '[aria-label^="Google Account:" i], button[aria-label^="Google Account:" i], [aria-label*="Google Account:" i]'
@@ -314,6 +324,13 @@
      * Handles grouped messages (multiple messages under one sender).
      */
     function scanChatMessages() {
+      // Observed Meet DOM variant: each message group container is .Ss4fHf
+      const ssContainers = document.querySelectorAll(".Ss4fHf");
+      if (ssContainers.length > 0) {
+        ssContainers.forEach((container, idx) => extractFromMessageContainer(container, idx));
+        return;
+      }
+  
       // Prefer scanning within the chat panel/list to avoid matching unrelated listitems.
       const chatPanel = document.querySelector(
         '[aria-label*="chat" i][role="complementary"], [data-panel-type="chat"], [aria-label*="chat" i]'
@@ -368,6 +385,63 @@
       const senderId = container.getAttribute("data-sender-id") || "";
       const messageId = container.getAttribute("data-message-id") || "";
   
+      // Observed Meet DOM variant (.Ss4fHf blocks)
+      if (container.classList && container.classList.contains("Ss4fHf")) {
+        const authorEl = container.querySelector(".poVWob");
+        const timeEl = container.querySelector(".MuzmKe");
+        const authorRaw = authorEl ? (authorEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
+        const timeRaw = timeEl ? (timeEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
+        const author =
+          authorRaw && authorRaw.toLowerCase() === "you"
+            ? (getLocalUserName() || authorRaw)
+            : authorRaw;
+
+        const parsedTime = parseTime(timeRaw) || parseTime(container.textContent || "");
+        const idTime = parsedTime || "";
+        const displayTime = parsedTime || new Date().toLocaleTimeString();
+
+        const lineEls = container.querySelectorAll(".ptNLrf");
+        if (lineEls.length > 0) {
+          Array.from(lineEls).forEach((lineEl, msgIdx) => {
+            const rawText = lineEl.textContent || "";
+            const text = cleanMessageText(rawText, author);
+            if (!text) return;
+
+            const uniqueKey = messageId
+              ? `${messageId}-${msgIdx}`
+              : makeChatId({ sender: author, time: idTime, text, msgIdx });
+
+            saveEntry({
+              id: uniqueKey,
+              type: "chat",
+              timestamp: displayTime,
+              sender: author || "Unknown",
+              message: text,
+              capturedAt: new Date().toISOString()
+            });
+          });
+          return;
+        }
+
+        // Fallback: treat entire container as one message
+        const text = cleanMessageText(container.textContent || "", author);
+        if (!text) return;
+
+        const uniqueKey = messageId
+          ? `${messageId}-0`
+          : makeChatId({ sender: author, time: idTime, text, msgIdx: 0 });
+
+        saveEntry({
+          id: uniqueKey,
+          type: "chat",
+          timestamp: displayTime,
+          sender: author || "Unknown",
+          message: text,
+          capturedAt: new Date().toISOString()
+        });
+        return;
+      }
+
       // Find all text message nodes — individual message bubbles within a group
       // Meet groups multiple messages from the same sender under one header
       // Prefer stable selectors first.
