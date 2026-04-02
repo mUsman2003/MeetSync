@@ -1,0 +1,146 @@
+﻿AI Product Development
+Course Project — Phase 0
+Problem & Product Framing (Discovery Gate)
+Status: Mandatory
+Grading: Approval / Revision Required (no numeric score)
+Duration: 5–9 days
+Submission format: Short written artifact or short presentation
+
+
+Purpose of Phase 0
+Phase 0 exists to ensure that only real problems enter the course project.
+Before you analyze business viability, conduct research, or build an MVP, you must demonstrate that:
+* A genuine problem exists
+* Real people experience it
+* It is worth examining as a potential product
+This phase deliberately precedes any business modeling or technical planning.
+If the problem is unclear, everything that follows will fail.
+What Phase 0 Is — and Is Not
+Phase 0 is
+* Exploratory
+* Qualitative
+* Problem-focused
+* Lightweight but thoughtful
+Phase 0 is not
+* A business plan
+* A pitch deck
+* A solution proposal
+* A technical design exercise
+
+
+What You Must Submit
+Each team must submit one Phase 0 artifact in any one of the formats below.
+Allowed Formats (choose one)
+1. Short written document (1–2 pages, PDF or Word)
+2. Short presentation (5–6 slides)
+3. Brief video (3–4 minutes, explaining the idea)
+4. Existing product reference
+   * Name + link to a product you want to:
+      * Improve meaningfully, or
+      * Rebuild for a different market or context
+Regardless of format, the content requirements are the same.
+
+
+Required Content (All Must Be Included)
+1. The Problem (Core Focus)
+Clearly describe:
+* What the problem is
+* When and where it occurs
+* Why it is frustrating, risky, or inefficient
+Focus on experience, not solutions.
+Avoid phrases like:
+* “We will build…”
+* “Our AI system…”
+* “The solution is…”
+
+
+2. Who Has This Problem?
+Be specific.
+Identify:
+* Primary users (who feels the pain directly)
+* Secondary stakeholders (who are affected indirectly)
+Generic labels such as “users” or “companies” are insufficient.
+________________
+
+
+3. Current Behavior & Workarounds
+Explain how people currently deal with this problem, including:
+* Tools they use
+* Manual processes
+* Informal workarounds
+* Why these are unsatisfying
+This section proves the problem is real and recurring.
+
+
+4. Why This Problem Matters
+Explain:
+* What happens if the problem is not solved
+* Who pays the cost (time, money, risk, stress, inefficiency)
+* Why this is worth addressing now
+You are arguing for problem importance, not product greatness.
+
+
+5. Existing Products or Alternatives (Light)
+If relevant:
+* Name 1–3 existing products or solutions
+* Briefly state what they do
+* Explain what they do not solve well
+This is not competitive analysis — that comes later.
+6. High-Level Product Intuition (Brief)
+You may include a one-paragraph intuition about:
+* What kind of product might address the problem
+Rules:
+* Keep this under 10% of your submission
+* No technical details
+* No feature lists
+* No architecture discussion
+
+
+Evidence Expectations
+You are expected to do light validation, such as:
+* Informal conversations
+* Public complaints, forums, reviews
+* Articles or reports
+* Observations from real contexts
+You must be able to answer:
+“How do you know this problem exists?”
+Evaluation Criteria (Approval Gate)
+Your submission will be reviewed against the following criteria.
+Approval Criteria
+* The problem is clearly and concretely defined
+* Real users and contexts are identified
+* Current workarounds are understood
+* The problem is meaningful, not trivial
+* The focus remains on the problem, not the solution
+Revision Required If
+* The problem is vague or abstract
+* The solution dominates the narrative
+* Users are poorly defined
+* The problem is purely hypothetical
+* There is no evidence the problem exists
+
+
+Outcomes of Phase 0
+After review, one of the following will happen:
+1. Approved
+You may proceed to Phase 1 (Business Viability Stress Test)
+2. Approved with Revision
+Minor clarification needed before Phase 1
+3. Not Approved (Reframe Required)
+You must rethink the problem or choose a new one
+This is normal and not penalized.
+Why Phase 0 Matters
+Teams that skip or rush Phase 0 typically:
+   * Build products nobody wants
+   * Force AI into weak problems
+   * Struggle to justify business logic later
+   * Overbuild MVPs that collapse in later phases
+Phase 0 prevents these failures.
+How Phase 0 Connects to the Course Project
+   * Phase 1 tests whether this problem can survive as a business
+   * Phase 2 replaces assumptions with evidence
+   * Phase 3 builds only what matters
+   * Phase 4 determines whether the product deserves to scale
+Final Note to Students
+A good product starts with a problem you can explain without slides.
+If you cannot explain the problem clearly, you are not ready to build.

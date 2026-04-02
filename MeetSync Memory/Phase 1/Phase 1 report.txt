@@ -1,0 +1,161 @@
+National University of Computer and Emerging Sciences
+Department of Computer Science
+
+AI Product Dev: Phase 0 + 1 Project
+Report
+Project Name: MeetSync
+
+Team Members
+Muhammad Usman
+Abdul Wahab
+Ahmed Ali
+Hussain Waseem
+
+(22I-0900)
+(22I-1178)
+(22I-1237)
+(22I-0893)
+
+1
+
+Phase 1: Problem Identification & Experience Research
+
+1.1
+
+1. The Problem (Core Focus)
+
+In high-velocity small teams and digital classrooms, there is a growing gap between attendance
+and engagement—a phenomenon we call ”Ghosting in Plain Sight.” The core of the
+problem is twofold:
+• Decision Amnesia: Critical tasks assigned ”on the fly” are lost because there is no
+real-time bridge between verbal intent and documented action.
+• Participation Decay: In remote environments, it is easy for participants to join a session and physically or mentally disappear. Without a real-time feedback loop, meeting
+leads and educators cannot distinguish between a ”connected” user and a ”participating” one.
+1.2
+
+2. Who Has This Problem?
+• Primary Users: Project Leads & Scrum Masters (chasing verbal commitments) and
+Educators & Online Instructors (struggling to measure comprehension in real-time).
+• Secondary Stakeholders: Individual Team Members (rework due to missed context)
+and Students (falling behind when lack of participation is unaddressed).
+
+1
+
+1.3
+
+3. Current Behavior & Workarounds
+• The ”Camera On” Rule: A blunt, intrusive workaround that measures physical
+presence but not mental engagement.
+• Manual Scribing: Error-prone and misses the ”engagement” level of other attendees.
+• Passive Attendance Logs: Zoom/Teams logs show ”joined” status but not if the
+user ”disappeared” mentally while the tab was open.
+
+1.4
+
+4. Existing Products or Alternatives
+• Otter.ai / Fireflies.ai: Passive tools. They capture what was said but not how well
+it was received or who was actually paying attention.
+• Standard LMS (Canvas/Moodle): These track ”submission” but not the ”engagement” during live instruction, creating a lag in feedback.
+
+2
+
+2
+
+Phase 1: Strategic Analysis & Project Viability Report
+
+2.1
+
+1. Lean Model Canvas (LMC)
+
+Problem
+1. Decision Amnesia
+
+Solution
+1. Real-time Task Extraction
+
+2. Engagement Blindness
+Existing Alternatives
+Manual scribing, Passive transcription (Otter/Fireflies).
+
+2. Contextual Quizzes
+Key Metrics
+Accuracy of task extraction,
+reduction in follow-ups.
+
+Cost Structure
+LLM API costs, Cloud hosting, B2B Acquisition.
+
+Channels
+Slack/Teams Apps, LinkedIn,
+Startup Incubators.
+
+2.2
+
+Unique Value Prop
+”Turning verbal chaos into actionable clarity with real-time
+engagement auditing.”
+Unfair Advantage
+Proprietary
+”Contextual
+Quiz” logic for actual comprehension.
+Revenue Streams
+Freemium
+for
+students,
+$10/user/month for Pro.
+
+2. Commercial Viability Assessment
+• Target Buyer vs. User: A significant hurdle exists where the User (Developer) may
+feel monitored, while the Buyer (CTO/PM) sees the value in efficiency.
+• Differentiation: MeetSync is Active, whereas current leaders are Passive.
+• AI Specific Risks: Hallucinations where AI ”invents” tasks, and Latency where
+quizzes arrive too late to be relevant.
+
+2.3
+
+3. Elaborative SMART Analysis of Business Goals
+
+A. Objective (Quantitative) Goals
+• Reduce Follow-up Meetings:
+Specific: Target a 30% reduction in ”clarification” syncs.
+Measurable: Measured by calendar metadata before and after adoption.
+Achievable: Achievable if task extraction accuracy exceeds 90%.
+Relevant: Directly addresses the ”Time Waste” impact area.
+Time-bound: Evaluate over the first 3 months of deployment.
+• Achieve $5,000 MRR:
+Specific: Reach $5k in Monthly Recurring Revenue.
+Measurable: Tracked through Stripe/Subscription dashboard.
+Achievable: High risk due to API costs; requires 500 paid users.
+Relevant: Essential for financial sustainability.
+Time-bound: 12 months post-launch.
+• Task Extraction Accuracy:
+Specific: Maintain a 95% F1-score for intent extraction.
+3
+
+Measurable: Measured via manual audit of 10% of calls.
+Achievable: Challenging due to ”Hallucination” risks in AI.
+Relevant: Critical for user trust and retention.
+Time-bound: Continuous monitoring; monthly audits.
+B. Subjective (Qualitative) Goals
+• Build User Trust:
+Specific: Users feel confident that ”verbal = documented.”
+Measurable: Measured via Qualitative Net Promoter Score (NPS).
+Achievable: Possible with high accuracy and low latency.
+Relevant: Essential to overcome the ”Privacy Barrier.”
+Time-bound: Bi-annual survey cycles.
+• Reduce Meeting Stress:
+Specific: Lower the perceived stress of ”missing something.”
+Measurable: Pre- and Post-user perception interviews.
+Achievable: Achievable for Project Leads; harder for audited Devs.
+Relevant: Addresses the ”Stress” cost identified in Phase 0.
+Time-bound: 6 months post-onboarding.
+• Perceived Reliability:
+Specific: Tool is seen as a ”Black Box” source of truth.
+Measurable: Measured by frequency of users ”citing” the tool in Slack.
+Achievable: Depends entirely on consistent uptime and accuracy.
+Relevant: Aligns with UVP of ”Actionable Clarity.”
+Time-bound: 6 months post-launch.
+
+4
+
+

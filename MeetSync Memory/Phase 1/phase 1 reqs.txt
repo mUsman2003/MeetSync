@@ -1,0 +1,228 @@
+﻿AI Product Development
+Course Project — Phase 1
+Business Viability Stress Test
+(Lean Model Canvas + Commercial Viability)
+Points: 100
+Due: [Insert due date]
+Submission format: Presentation deck (mandatory)
+Prerequisite: Phase 0 approval
+________________
+
+
+Purpose of Phase 1
+Phase 1 exists to answer one question:
+If this is a real problem, could it plausibly survive as a product or business?
+In Phase 0, you proved the problem exists.
+In Phase 1, you attempt to disprove the business viability of addressing it.
+This phase is deliberately skeptical.
+Finding weaknesses is a success, not a failure.
+________________
+
+
+Core Mindset (Read Carefully)
+* You are not pitching your idea
+* You are stress-testing your idea
+* You are expected to surface risks, gaps, and contradictions
+In industry, strong teams kill weak ideas early.
+That is the behavior this phase trains.
+________________
+
+
+What You Must Submit
+Each team must submit one detailed presentation deck and present it in class.
+The deck must include all four deliverables below.
+________________
+
+
+Deliverable 1 — Lean Model Canvas (Required)
+Create a Lean Model Canvas (LMC) for your course project.
+Your canvas must clearly define:
+* Problem
+* Customer Segments
+* Unique Value Proposition
+* Solution (high-level only)
+* Channels
+* Revenue Streams
+* Cost Structure
+* Key Metrics
+* Unfair Advantage
+Team Process Requirement
+* One sub-team builds the initial canvas
+* Another sub-team reviews it critically
+You are expected to revise the canvas after critique.
+________________
+
+
+Deliverable 2 — Critical Analysis of the Lean Model Canvas (Required)
+This is the most heavily weighted component of Phase 1.
+You must explicitly identify internal mismatches and weak logic in your own canvas.
+You should look for:
+* Customer segment vs channel mismatches
+* Revenue model vs willingness-to-pay gaps
+* Key metrics that do not reflect value delivery
+* Cost structures that scale faster than value
+* “Unfair advantages” that are easily copied
+* Solution scope that exceeds realistic constraints
+You should approach this as:
+* A skeptical investor
+* A skeptical enterprise buyer
+* A skeptical internal leadership review
+Do not defend the idea blindly.
+Expose where it could fail.
+________________
+
+
+Deliverable 3 — Commercial Viability Assessment (Required)
+You must assess both Market Viability and Product Viability.
+This must be explicit, structured, and evidence-backed.
+________________
+
+
+A. Market Viability
+You must address all of the following:
+* Target customer definition (user vs buyer)
+* Market size or realistic proxy
+* Severity and frequency of the problem
+* Existing competitors and substitutes
+* Switching costs and adoption barriers
+* Willingness to pay (direct or indirect evidence)
+You must clearly state:
+* What assumptions you are making
+* What evidence supports them
+* Where uncertainty remains high
+________________
+
+
+B. Product Viability
+You must address:
+* Why your product would be meaningfully better than alternatives
+* Whether it could realistically be built and maintained
+* What differentiation could persist over time
+* Risks specific to AI products (trust, accuracy, misuse, failure modes)
+* Regulatory, legal, or ethical constraints (if relevant)
+________________
+
+
+Deliverable 4 — SMART Analysis of Business Goals (Required)
+You must identify both Subjective and Objective Goals.  
+As part of the Critical Analysis of the Lean Model Canvas, teams must also perform a SMART analysis of their claimed business goals. These goals should be drawn from claims already implied in the Lean Model Canvas, not newly invented targets
+Teams are required to identify:
+* Three objective business goals (measurable, outcome-based e.g., revenue, cost reduction, time savings, measurable efficiency)
+* Three subjective business goals (perception- or value-based e.g., experience, trust, risk mitigation, reliability)
+Teams must present these goals in a table format, where each goal is evaluated against SMART criteria with logical justification like represented in the sample table below:
+      Goal
+	    Specific
+	    Measurable
+	  Achievable
+	   Relevant
+	 Time-bound
+	Increase average freelancer monthly income (Objective)
+	Focuses on income earned by freelancers on the platform
+	Can be measured using average monthly earnings before and after policy change
+	Achievable if platform demand and skill supply remain stable
+	Directly aligns with economic well-being of freelancers
+	Can be evaluated over a 6–12 month period
+	The purpose of this exercise is not to justify the goal, but it is used to expose vague, non-evaluable, or unjustified claims in the Lean Model Canvas. Goals that fail one or more SMART dimensions should be explicitly acknowledged and discussed.
+________________
+
+
+Research Expectations (Mandatory)
+You are expected to conduct light but credible research.
+Acceptable sources include:
+* Industry articles or reports
+* Public product documentation
+* Competitor pricing pages
+* Reviews, forums, complaints
+* Case studies or analyst blogs
+Unsupported claims will be treated as assumptions.
+You must be able to defend your reasoning verbally.
+________________
+
+
+Presentation Requirements
+Your deck must include, at minimum:
+1. Problem recap (from Phase 0)
+2. Lean Model Canvas
+3. Critical mismatch analysis
+4. Market viability assessment
+5. Product viability assessment
+6. Competitors and substitutes
+7. Top 3–5 risks that could kill the idea
+8. Decision: proceed / refine / pivot
+________________
+
+
+Grading Rubric (100 Points)
+1. Lean Model Canvas Quality — 20 points
+* Completeness and coherence
+* Realism of assumptions
+________________
+
+
+2. Critical Analysis & Risk Identification — 30 points
+* Depth of mismatch identification
+* Willingness to challenge own idea
+* Quality of reasoning
+________________
+
+
+3. Market Viability Analysis — 25 points
+* Clear customer definition
+* Evidence-based market logic
+* Competitor and substitute awareness
+________________
+
+
+4. Product Viability Analysis — 15 points
+* Differentiation logic
+* Feasibility reasoning
+* AI-specific risks acknowledged
+________________
+
+
+5. Presentation Quality & Clarity — 10 points
+* Logical structure
+* Clear communication
+* Ability to answer questions
+________________
+
+
+Common Mistakes (Read Carefully)
+* Starting with “We will build an AI system that…”
+* Treating AI as the value instead of the enabler
+* Claiming “huge market” without segmentation
+* Ignoring competitors or substitutes
+* Hiding assumptions instead of exposing them
+* Overselling instead of stress-testing
+________________
+
+
+Rules & Constraints
+* Focus on business and market reality, not implementation
+* No architecture diagrams
+* No tech stack discussions
+* No detailed feature lists
+* Pivoting is allowed and encouraged if risks are severe
+________________
+
+
+Outcomes of Phase 1
+After review, one of the following will happen:
+1. Approved → proceed to Phase 2
+2. Approved with Required Refinements
+3. Pivot Required → revisit Phase 0 framing
+Pivoting is not penalized if justified.
+________________
+
+
+How Phase 1 Feeds the Course Project
+* Phase 2 replaces assumptions identified here with evidence
+* Phase 3 builds only what survives this scrutiny
+* Phase 4 evaluates whether the product deserves scaling
+Weak Phase 1 work almost always causes downstream failure.
+________________
+
+
+Final Note to Students
+A technically impressive product built on a weak business foundation is still a failure.
+Phase 1 teaches you how to avoid that mistake.

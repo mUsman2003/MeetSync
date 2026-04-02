@@ -18,6 +18,7 @@
     let localUserName = null;        // Cached display name for "You" / self messages
     let extensionContextValid = true;
     let urlWatcher = null;
+    let sessionStartTime = null;     // Timestamp when current meeting started
   
     // ─── Helpers ──────────────────────────────────────────────────────────────
   
@@ -90,13 +91,18 @@
     }
   
     function makeChatId({ sender, time, text, msgIdx }) {
+      // Normalize local user to a stable constant for ID generation
       const senderN = normalizeForId(sender);
-      const timeN = normalizeForId(time); // may be empty if Meet doesn't expose it
-      const textN = normalizeForId(text);
+      const isLocal = (senderN === "you" || (localUserName && senderN === normalizeForId(localUserName)));
+      const senderKey = isLocal ? "__ME__" : senderN;
   
-      // Include msgIdx (within grouped messages) to disambiguate repeats,
-      // but avoid containerIdx which shifts as Meet re-renders.
-      const fingerprint = `${senderN}|${timeN}|${textN}|${msgIdx ?? ""}`;
+      const textN = normalizeForId(text);
+      
+      // EXCLUDING 'time' from the fingerprint for maximum stability.
+      // In Meet, the text and sender plus the message index in the group 
+      // is 99.9% unique. Including time often causes duplicates when 
+      // "Just now" updates to a real time.
+      const fingerprint = `${senderKey}|${textN}|${msgIdx ?? ""}`;
       return `chat_${hashString(fingerprint)}`;
     }
   
@@ -189,28 +195,68 @@
       return cleaned;
     }
 
+    // ─── Task Detection ───────────────────────────────────────────────────────
+
+    /**
+     * Keyword/pattern heuristics that flag a chat message as a likely action item.
+     * Intentionally conservative — only strong signals, to minimise false positives.
+     */
+    const TASK_SIGNALS = [
+      /\b(action\s+item|todo|to[-\s]do|follow[\s-]?up|next\s+steps?)\b/i,
+      /\b(please|can\s+you|could\s+you|would\s+you|make\s+sure|ensure|don'?t\s+forget|remember\s+to)\b/i,
+      /\bby\s+(eod|eow|cob|tomorrow|today|monday|tuesday|wednesday|thursday|friday|\d{1,2}[\/\-]\d{1,2})\b/i,
+      /\b(will|shall|going\s+to)\b.{1,60}\b(by|before|today|tomorrow|eod|eow)\b/i,
+      /\b(assigned?\s+to|task\s+for|responsible\s+for|owner[:\s])\b/i,
+      /\b(needs?\s+to|has\s+to|have\s+to|must|should)\s+(do|fix|check|send|review|update|create|write|prepare|submit|implement|deploy|test|call|email|schedule|book)\b/i,
+      /\b(task|deadline|complete|finish|due)\b/i,
+      /@\w{2,}/,
+    ];
+
+    function detectIsTask(text) {
+      if (!text || text.length < 8) return false;
+      return TASK_SIGNALS.some(p => p.test(text));
+    }
+
+    /**
+     * Extracts a participant name from a join/leave notification string.
+     * e.g. "Jane Smith joined" → "Jane Smith"
+     */
+    function extractParticipantName(text) {
+      // Improved regex to handle "X joined", "X has joined", "X has left the meeting", etc.
+      const m = (text || "").match(/^(.+?)(?:\s+has)?\s+(?:joined|left)(?:\s+the meeting)?\b/i);
+      return m ? m[1].trim() : null;
+    }
+
     function getLocalUserName() {
       if (localUserName) return localUserName;
   
-      // Observed Meet DOM: current user name in header
-      const headerName = document.querySelector(".dwSJ2e");
-      if (headerName && headerName.textContent) {
-        const t = headerName.textContent.replace(/\u202F/g, " ").trim();
+      // The most robust 2026 selector: data-self-name attribute
+      const selfNameEl = document.querySelector("[data-self-name]");
+      if (selfNameEl) {
+        const t = (selfNameEl.getAttribute("data-self-name") || "").trim();
         if (t) {
           localUserName = t;
           return localUserName;
         }
       }
-  
-      // Common: profile/account button includes "Google Account: Name"
-      const accountEl = document.querySelector(
-        '[aria-label^="Google Account:" i], button[aria-label^="Google Account:" i], [aria-label*="Google Account:" i]'
-      );
+
+      // Fallback: aria-label of the account button
+      const accountEl = document.querySelector('[aria-label^="Google Account:" i], button[aria-label^="Google Account:" i]');
       const label = accountEl ? (accountEl.getAttribute("aria-label") || "") : "";
       const m = label.match(/Google Account:\s*([^,(]+?)(?:\s*[,(]|$)/i);
       if (m && m[1]) {
         localUserName = m[1].trim();
         return localUserName;
+      }
+  
+      // Fallback 2: Name in header
+      const headerName = document.querySelector(".dwSJ2e, .R6S7W");
+      if (headerName && headerName.textContent) {
+        const t = headerName.textContent.trim();
+        if (t && t.toLowerCase() !== "you") {
+          localUserName = t;
+          return localUserName;
+        }
       }
   
       return null;
@@ -400,7 +446,7 @@
         const idTime = parsedTime || "";
         const displayTime = parsedTime || new Date().toLocaleTimeString();
 
-        const lineEls = container.querySelectorAll(".ptNLrf");
+        const lineEls = container.querySelectorAll('.ptNLrf, [jsname="W297wb"]');
         if (lineEls.length > 0) {
           Array.from(lineEls).forEach((lineEl, msgIdx) => {
             const rawText = lineEl.textContent || "";
@@ -417,6 +463,7 @@
               timestamp: displayTime,
               sender: author || "Unknown",
               message: text,
+              isTask: detectIsTask(text),
               capturedAt: new Date().toISOString()
             });
           });
@@ -437,6 +484,7 @@
           timestamp: displayTime,
           sender: author || "Unknown",
           message: text,
+          isTask: detectIsTask(text),
           capturedAt: new Date().toISOString()
         });
         return;
@@ -445,12 +493,12 @@
       // Find all text message nodes — individual message bubbles within a group
       // Meet groups multiple messages from the same sender under one header
       // Prefer stable selectors first.
-      let textNodes = container.querySelectorAll('[data-message-text], [jsname="r4nke"]');
+      let textNodes = container.querySelectorAll('[data-message-text], [jsname="W297wb"], [jsname="r4nke"]');
       // Secondary fallback (some Meet builds don't use the attributes above).
       // Keep it narrower than the old broad selectors by excluding buttons/menus.
       if (textNodes.length === 0) {
         textNodes = container.querySelectorAll(
-          'div[class*="message" i] span, span[class*="message" i], div[dir="auto"] span'
+          'div[jsname="W297wb"] span, span[jsname="W297wb"], div[dir="auto"] span'
         );
       }
   
@@ -507,6 +555,7 @@
             timestamp: displayTime,
             sender: senderName || "Unknown",
             message: text,
+            isTask: detectIsTask(text),
             capturedAt: new Date().toISOString()
           };
   
@@ -543,6 +592,7 @@
           timestamp: displayTime,
           sender: senderName || "Unknown",
           message: text,
+          isTask: detectIsTask(text),
           capturedAt: new Date().toISOString()
         };
   
@@ -602,16 +652,76 @@
       // Don't re-log the same event text within 5 seconds
       if (seenIds.has(uniqueKey)) return;
   
+      const participantName = extractParticipantName(text);
       const entry = {
         id: uniqueKey,
         type: "event",
         timestamp: timeStr,
         sender: "System",
         message: text,
+        isJoin,
+        isLeave,
+        participantName,
         capturedAt: new Date().toISOString()
       };
   
       saveEntry(entry);
+    }
+  
+    /**
+     * Active Participant Scanner
+     * Scrapes the "People" panel if open, and reads the participant count button.
+     */
+    function scanActiveParticipants() {
+      // 1. Grab attendee count from the "Show everyone" button
+      const countEl = document.querySelector(".p2hF1c, [aria-label*='Show everyone' i] [class*='count' i]");
+      if (countEl) {
+        const count = parseInt(countEl.textContent || "0");
+        if (count > 0 && extensionContextValid) {
+          chrome.storage.local.set({ participantCount: count }).catch(err => {
+            if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+          });
+        }
+      }
+
+      // 2. Scrape names from the People panel if open
+      const peoplePanel = document.querySelector('[aria-label="Participants" i], [aria-label="People" i]');
+      if (peoplePanel) {
+        const nameEls = peoplePanel.querySelectorAll('[jsname="unp99"], .zW4Ivb');
+        nameEls.forEach(el => {
+          let name = el.textContent.trim();
+          if (!name || name.length < 2 || name.toLowerCase().includes("more_vert")) return;
+          
+          // Filter out timestamps and relative times
+          if (/\d+ (?:sec|min|hour|day)s? (?:ago|left)/i.test(name)) return;
+          
+          // If we see "(You)", resolve it to our localUserName or keep as "You"
+          if (name.includes("(You)")) {
+            name = name.replace("(You)", "").trim();
+            if (name && !localUserName) localUserName = name;
+          }
+
+          if (name) {
+             const timeStr = new Date().toLocaleTimeString();
+             const uniqueKey = makeEventId({ time: "", text: `${name} active` });
+             
+             // Save as a "sync" event if not recently seen
+             const entry = {
+               id: uniqueKey,
+               type: "event",
+               timestamp: timeStr,
+               sender: "System",
+               message: `${name} is present`,
+               isJoin: true,
+               isLeave: false,
+               participantName: name,
+               isSync: true, // Marker for background sync
+               capturedAt: new Date().toISOString()
+             };
+             saveEntry(entry);
+          }
+        });
+      }
     }
   
     // ─── Chat Panel Detection ─────────────────────────────────────────────────
@@ -633,11 +743,17 @@
   
       if (isOpen !== chatPanelOpen) {
         chatPanelOpen = isOpen;
-        chrome.storage.local.set({ chatPanelOpen: isOpen });
-        chrome.runtime.sendMessage({
-          type: "CHAT_PANEL_STATE",
-          open: isOpen
-        }).catch(() => {});
+        if (extensionContextValid) {
+          chrome.storage.local.set({ chatPanelOpen: isOpen }).catch(err => {
+            if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+          });
+          chrome.runtime.sendMessage({
+            type: "CHAT_PANEL_STATE",
+            open: isOpen
+          }).catch(err => {
+            if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+          });
+        }
       }
   
       return isOpen;
@@ -658,23 +774,38 @@
         seenIds.clear();
   
         // Store the new session info (do NOT clear old session data)
-        await chrome.storage.local.set({
-          activeMeetingId: meetId,
-          chatPanelOpen: false,
-          lastUpdated: Date.now()
-        });
-  
-        chrome.runtime.sendMessage({
-          type: "SESSION_STARTED",
-          meetingId: meetId
-        }).catch(() => {});
+        sessionStartTime = Date.now();
+        if (extensionContextValid) {
+          try {
+            await chrome.storage.local.set({
+              activeMeetingId: meetId,
+              chatPanelOpen: false,
+              lastUpdated: Date.now(),
+              sessionStartTime
+            });
+    
+            chrome.runtime.sendMessage({
+              type: "SESSION_STARTED",
+              meetingId: meetId,
+              startTime: sessionStartTime
+            });
+          } catch (err) {
+            if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+          }
+        }
   
         // Reload existing IDs into the dedup set to prevent re-logging after page refresh
         const key = `meet_${meetId}`;
-        const result = await chrome.storage.local.get(key);
-        const existing = result[key] || [];
-        existing.forEach(entry => seenIds.add(entry.id));
-        console.log(`[MeetSync] Restored ${seenIds.size} existing entries for dedup.`);
+        if (extensionContextValid) {
+          try {
+            const result = await chrome.storage.local.get(key);
+            const existing = result[key] || [];
+            existing.forEach(entry => seenIds.add(entry.id));
+            console.log(`[MeetSync] Restored ${seenIds.size} existing entries for dedup.`);
+          } catch (err) {
+            if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+          }
+        }
       }
     }
   
@@ -692,50 +823,30 @@
         detectChatPanelState();
         scanChatMessages();
         scanSystemEvents();
+        scanActiveParticipants();
       }, 500);
     }
-  
+
     /**
      * Sets up the primary MutationObserver on document.body.
-     * Scoped to subtree changes only — avoids watching attribute noise.
+     * Watches for chat changes and system event toasts in one go.
      */
     function startObserver() {
       if (observer) observer.disconnect();
   
       observer = new MutationObserver((mutations) => {
-        // Quick filter: only act on mutations that add nodes
-        const hasAddedNodes = mutations.some(m => m.addedNodes.length > 0);
-        if (hasAddedNodes) {
+        // Only act on mutations that add nodes to minimize overhead
+        if (mutations.some(m => m.addedNodes.length > 0)) {
           scheduleScan();
         }
       });
   
       observer.observe(document.body, {
         childList: true,
-        subtree: true,
-        // Intentionally NOT observing attributes or characterData
-        // to minimize performance overhead
+        subtree: true
       });
   
       console.log("[MeetSync] Observer started.");
-    }
-  
-    /**
-     * Sets up a secondary observer specifically watching for system event toasts.
-     * These appear at the top of the Meet UI and vanish quickly.
-     */
-    function startSystemObserver() {
-      if (systemObserver) systemObserver.disconnect();
-  
-      systemObserver = new MutationObserver(() => {
-        scanSystemEvents();
-      });
-  
-      // Watch the entire body for the toast elements
-      systemObserver.observe(document.body, {
-        childList: true,
-        subtree: true
-      });
     }
   
     // ─── URL Change Watcher ───────────────────────────────────────────────────
@@ -779,7 +890,6 @@
       }
       await initSession();
       startObserver();
-      startSystemObserver();
       // Initial scan after a short delay to let the page settle
       setTimeout(() => {
         if (!extensionContextValid) return;

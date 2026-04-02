@@ -1,0 +1,131 @@
+﻿AI Product Development: Course Project — Phase 2
+Research Report: Product, Business, and Market Evidence
+Purpose of Phase 2
+Phase 2 exists to replace assumptions with evidence.
+In Phase 1, you identified risks, gaps, and weak assumptions in your product idea. In Phase 2, you will conduct structured research to either:
+* Validate those assumptions with evidence, or
+* Discover that the idea must be narrowed, repositioned, or pivoted
+This phase ensures that when you build in Phase 3, you are building with intentional scope and informed trade-offs, not guesses.
+Submission Requirements
+You must submit a research report (maximum 4 A4 pages, excluding references) that investigates the critical foundations of your course project across three layers:
+1. Product Research
+2. Business Research 
+3. Market / Industry Research 
+4. Economic Research (Macro-Raisks)
+Required Structure
+Your report must contain all sections below.
+
+
+1. Product Research (Critical)
+Key question:
+What exactly must this product do to solve the problem meaningfully?
+Key consideration:
+We have LMC (lean model canvas) already built -> we will do the research for validating Product Viability?
+You must address:
+A. User Needs & Pain Points
+* Who are the users?
+* What are they trying to achieve?
+* Where do they struggle today?
+* Evidence sources may include:
+   * User interviews
+   * Surveys
+   * Public complaints, forums, reviews
+   * Case studies or reports
+B. Existing Solutions & Substitutes
+* What tools, workflows, or workarounds are used today?
+* What do these solutions do well?
+* Where do they fail or create friction?
+C. Product Scope & Differentiation
+* What must your product do to deliver value?
+* What will it explicitly not attempt to solve?
+* How is your approach meaningfully different (based on evidence)?
+Avoid architecture and implementation details.
+2. Business Research
+Key question:
+Why could this exist as a sustainable product or business?
+Key consideration:
+We have BMC (business model canvas) and Value Chains already built -> we will do the research for validating Business Viability?
+You must address:
+A. Customer & Buyer Dynamics
+* Who uses the product vs who pays?
+* How are purchasing decisions made?
+* What incentives or constraints exist?
+B. Revenue & Cost Logic (High-Level)
+* How similar products are priced
+* Willingness-to-pay evidence or proxies
+* Primary cost drivers (development, data, maintenance, operations)
+No financial model required, but reasoning must be credible.
+C. Business Risks & Constraints
+* Operational risks
+* Trust, compliance, or governance concerns
+* Scaling limitations or dependencies
+3. Market / Industry Research (Critical)
+Key question:
+Why does this problem matter in the broader market, and why now?
+Key consideration:
+We need to decide whether we will conduct Primary Research (new knowledge) or Secondary Research (existing knowledge and trends) or both?
+You must address:
+A. Market Context
+* Target market definition
+* Market size or proxy indicators
+* Relevant industry trends
+B. Competitive Landscape
+* Direct competitors
+* Indirect competitors
+* Non-consumption or manual alternatives
+Explain:
+* Who wins today
+* Why they win
+* Where they leave gaps
+C. Structural Barriers
+* Switching costs
+* Regulatory or legal constraints
+* Organizational or cultural resistance
+3. Economic Research (Critical)
+Key question:
+Why does this problem matter in the economic market currently?
+Key consideration:
+We need to decide the macro risks including inflation, politics, regulations and other risks?
+Assumptions & Evidence
+Throughout the report, you must:
+* Explicitly label assumptions
+* Identify which assumptions are now supported by evidence
+* Highlight assumptions that remain high-risk
+A strong report makes uncertainty visible.
+
+
+Phase 2 Summary Section 
+End your report with one page or less that answers:
+* What assumptions were confirmed?
+* What assumptions remain risky?
+* How has your product scope changed?
+* What will your MVP in Phase 3 focus on and exclude?
+Evaluation Criteria (100 Points)
+Criterion
+	Points
+	Product research depth & relevance
+	30
+	Business reasoning & realism
+	25
+	Market & competitor understanding
+	25
+	Evidence quality & assumption handling
+	10
+	Clarity, structure, and communication
+	10
+	
+
+________________
+Common Mistakes to Avoid
+* Writing a literature review instead of applied research
+* Ignoring evidence that contradicts your idea
+* Overusing buzzwords without support
+* Treating assumptions as facts
+* Including technical design prematurely
+* Expanding scope instead of narrowing it
+Outcomes of Phase 2
+After review, you should have:
+* A justified product scope
+* Evidence-backed user understanding
+* Reduced business and market uncertainty
+* A clear plan for what the MVP must test

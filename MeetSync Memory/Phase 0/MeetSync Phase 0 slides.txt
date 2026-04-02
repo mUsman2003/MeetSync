@@ -1,0 +1,36 @@
+MeetSync
+The Problem: Critical verbal decisions and tasks are
+frequently lost or misunderstood.
+Context: Occurs during live, remote, or informal
+discussions where tasks are assigned "on the fly".
+Friction: Passive participation goes unnoticed due to a
+lack of real-time engagement feedback.
+
+Who Has This Problem?
+Primary Users:
+Project Leads
+Managers tracking commitments.
+Secondary Stakeholders:
+Individual affected by ownership and rework.
+
+Requirement:
+
+Moving beyond generic "users" to identify those feeling
+direct pain.
+
+Current Behavior & Workarounds
+01 Existing Tools: Incomplete manual note-taking or tedious
+re-watching of long recordings
+02 Manual Processes: Relying on "trust" and informal
+memory of verbal agreements.
+03 The Failure: Current workarounds are time-consuming,
+prone to human error, and lack engagement tracking.
+
+Why it matters and Product Intuition
+The Cost: Missed deadlines, high stress, and
+uncompensated scope expansion.
+
+High-Level Intuition: Real-time engagement checkpoints
+using ASR, NLP, and LLM intent extraction.
+
+

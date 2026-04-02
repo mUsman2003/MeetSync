@@ -1,0 +1,213 @@
+Phase 1
+
+Problem Recap
+Decision Amnesia:
+Critical decisions and task responsibilities are frequently
+forgotten or misunderstood in small teams.
+
+Engagement Blindness
+Passive participation in remote/informal meetings goes
+unnoticed due to a lack of real-time structure.
+
+Note-Taking Overhead
+High manual effort is required to document meetings,
+often resulting in inaccurate or incomplete records.
+
+Problem
+Decision amnesia in
+small teams.
+Lack of engagement
+tracking in remote
+meetings.
+High overhead of
+manual note-taking.
+
+Existing
+Alternatives
+Manual notetaking/scribing.
+Passive transcription
+tools (Otter.ai/Fireflies).
+Recording meetings for
+manual playback.
+
+Solution
+Real-time automated task
+extraction and contextaware engagement quizzes.
+
+Unique Value
+Proposition
+"Turning verbal chaos into
+actionable clarity with realtime engagement auditing."
+
+Key Metrics
+Accuracy of task
+extraction.
+Reduction in follow-up
+"clarification" meetings.
+Active User Retention.
+
+Unfair Advantage
+proprietary "Contextual
+Quiz" logic that measures
+comprehension, not just
+presence.
+
+Channels
+High Level
+Concept
+"A Black Box Flight Recorder
+for Business Meetings" or
+"Duolingo-style Engagement
+for Professional Syncs."
+
+Slack App Directory,
+Microsoft Teams Store,
+LinkedIn B2B outreach.
+
+Customer
+Segments
+Primary: Agile Scrum
+Masters & Project Leads
+in small tech startups
+(10-50 employees).
+Secondary: Student
+project groups.
+
+Early Adopters
+Remote-first startup
+founders.
+Agile Scrum Masters in
+fast-paced tech
+environments.
+High-stakes academic
+project leads.
+
+Cost Structure
+
+Revenue Streams
+
+LLM API costs, Cloud hosting (Real-time audio processing),
+Marketing/Acquisition.
+
+Tiered Subscription (SaaS): Free for students, $10/user/month for professional
+teams.
+
+Critical
+Mismatch
+Analysis
+
+Customer Segments
+
+↔ Channels
+
+High risk of legal/compliance blocks for AI "listening" in
+sensitive corporate environments.
+
+Customer Segments
+
+↔ Revenue Streams
+
+Small teams often have the lowest willingness to pay,
+favoring free tools like Google Docs.
+
+Cost Structure
+
+↔ Revenue Streams
+
+Real-time ASR and LLM token usage are expensive; a free
+tier for student groups could lead to bankruptcy.
+
+Key Metrics
+
+↔ Solution
+
+Accuracy" is hard to measure; a single missed decision can
+lead to total user trust loss.
+
+Market Viability
+Market & Competitors
+
+User vs. Buyer
+
+Substitution Risk
+
+Assumption to Test:
+
+The developer uses the tool, but
+the CTO/Team Lead must buy into
+the "engagement scoring".
+
+The biggest competitor is a human
+taking "good enough" free notes.
+
+It’s excellent for capturing audiences
+beyond a one-time event.
+
+Differentiation
+Unlike passive transcription tools (Otter.ai), MeetSync is
+active, interrupting to confirm decisions.
+
+Product
+Viability & AI
+Risks
+
+AI Failure Modes
+Hallucinations where the AI "invents" tasks not actually
+discussed.
+
+Latency Risks
+If engagement quizzes arrive too late, the conversation
+has already moved on.
+
+Technical Maintenance
+Maintaining high-fidelity real-time audio streams is
+resource-intensive.
+
+Fireflies.ai:
+
+✓ Accurate transcription and speaker ID.
+
+✗ Fully passive; no real-time intervention.
+
+Competitors
+&
+Substitutes
+
+Fathom:
+
+✓ Free, high-quality highlights & summaries.
+
+✗ No task ownership or engagement quizzes.
+
+Fellow.app:
+
+✓ Excellent for agendas and action items.
+
+✗ Requires manual input; no AI speech extraction.
+
+Manual Notes:
+
+✓ Zero cost and high data privacy.
+
+✗ Prone to human error and decision amnesia.
+
+Cultural Resistance
+Employees may feel "surveilled" by realtime engagement quizzes.
+
+Top Risks
+& Final
+Decision
+
+Privacy Compliance
+Legal teams in high-stakes industries
+may ban the tool.
+
+Cost-to-Value
+LLM token costs might exceed profit
+margins for heavy users.
+
+We will proceed but must investigate "on-device"
+processing and softer engagement UX to mitigate
+privacy and cultural risks.
+
+

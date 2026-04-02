@@ -1,0 +1,148 @@
+AI Product Development: Course Project - Phase 3
+MVP Development & Demo
+
+Purpose of Phase 3
+Phase 3 is where you turn validated thinking into a working product.
+You are not building a prototype to impress.​
+You are building an MVP that tests the most important assumptions identified in Phases 1
+and 2.
+This phase answers one question:
+Can we build the smallest usable product that meaningfully addresses the
+problem?
+
+Core Mindset
+●​ Build less, but build it end-to-end
+●​ Prioritize learning and validation over features
+●​ Treat limitations and failures as signals, not mistakes
+A technically impressive system that does not clearly deliver user value will score poorly.
+
+What “MVP” Means in This Course
+For this course project, an MVP:
+
+✅ Solves the core problem identified earlier​
+✅ Supports a real user flow (input → processing → output)​
+✅ Can be used or interacted with, not just shown​
+✅ Is stable enough for a live demo​
+✅ Makes its limitations visible
+An MVP does not need:
+
+●​ Full feature coverage
+●​ Production-grade scalability
+●​ Perfect UI/UX polish
+●​ Advanced optimization
+
+What You Are Expected to Build
+Your MVP must include the following minimum components, adapted to your project:
+
+1. Core Functionality (Required)
+●​ The primary capability that directly addresses the problem
+●​ Clearly demonstrates why the product is useful
+
+2. User Interaction (Required)
+One of the following:
+●​ Web interface
+●​ App interface
+●​ API with clear usage examples
+The user flow must be obvious.
+
+3. Data / Inputs (Required)
+●​ Real data or realistically simulated data
+●​ Clear explanation of:
+○​ What data is used
+○​ Why it is sufficient for an MVP
+○​ Known data limitations
+
+4. Output & Value (Required)
+●​ Outputs that users could reasonably act upon
+●​ Clear mapping from output → user value
+
+5. Failure Handling (Required)
+
+●​ At least basic handling of:
+○​ Invalid inputs
+○​ Uncertain or low-confidence outputs
+●​ Clear communication of limitations to the user
+
+Technical Freedom (With Responsibility)
+You may choose:
+●​ Programming language
+●​ Frameworks
+●​ Models
+●​ Infrastructure
+However:
+●​ Choices must be justified based on Phase 2 research
+●​ Overengineering will not be rewarded
+●​ “Using advanced AI” is not a justification by itself
+You should be able to explain:
+●​ Why this approach fits the problem
+●​ What you deliberately chose not to build
+
+Deliverables
+You must submit all of the following.
+
+1. Live Demo (Mandatory)
+You must demonstrate:
+●​ The core user flow
+●​ The main value delivered
+●​ At least one realistic usage scenario
+The demo must work end-to-end.
+
+2. Code Repository (Mandatory)
+Your repository must include:
+●​ Readable structure
+●​ Clear setup instructions
+●​ Sample data (if applicable)
+●​ Basic documentation
+Clean, understandable code is more important than clever code.
+
+3. Technical Summary (2–3 slides)
+Your summary must explain:
+●​ Product scope
+○​ What you built
+○​ What you intentionally did not build
+●​ System overview (high-level)
+●​ Key technical decisions and trade-offs
+●​ Known limitations and risks
+●​ What assumptions this MVP is testing
+
+Grading Rubric (100 Points)
+1. Alignment with Phases 1 & 2 — 20 points
+●​ MVP clearly reflects validated problem and research
+●​ Scope matches earlier decisions
+
+2. Core Functionality Effectiveness — 25 points
+●​ MVP meaningfully solves the core problem
+●​ Value proposition is clearly demonstrated
+
+3. MVP Completeness & Coherence — 20 points
+●​ End-to-end user flow works
+●​ No critical gaps in the experience
+
+4. Technical Reasoning & Trade-offs — 15 points
+●​ Clear explanation of choices
+●​ Sensible simplifications
+●​ Awareness of limitations
+
+5. Demo Quality & Clarity — 10 points
+●​ Clear explanation during demo
+●​ Demo works reliably
+
+6. Code Quality & Organization — 10 points
+●​ Readability
+●​ Structure
+●​ Documentation
+
+Common Mistakes to Avoid
+●​ Building features not justified by research
+●​ Overengineering instead of delivering value
+●​ Focusing on models instead of users
+●​ Submitting unstable or partial demos
+●​ Treating the MVP as “just a prototype”
+
+How Phase 3 Feeds the Course Project
+●​ Phase 4 evaluates whether the MVP shows signs of Product–Market Fit
+●​ Metrics, experiments, and go-to-market reasoning all depend on what you built here
+Weak Phase 3 execution makes Phase 4 speculative. An MVP is not about showing how much
+you can build. It is about proving you built the right thing.
+
+

@@ -1,0 +1,141 @@
+
+National University of Computer and Emerging Sci- ences
+Department of Computer Science
+
+
+
+AI Product Development: Phase 2
+Research Report: Product, Business, and Market Evidence
+Project: MeetSync
+
+Team Members
+Muhammad Usman (22I-0900)	Abdul Wahab (22I-1178) Ahmed Ali (22I-1237)	Hussain Waseem (22I-0893)
+
+March 2026
+
+
+1. Product Research
+In Phase 1 we constructed a Lean Model Canvas (LMC) around two core pain points-Decision Amnesia and Engagement Blindness-and hypothesized that real-time task extraction paired with contextual quizzes could address them. In Phase 2, we have conducted structured research to validate these assumptions with market evidence.
+1.1 User Needs & Pain Points
+Who are the users? Our primary users are project leads and scrum masters in small-to-mid tech teams (10-50 employees), alongside educators conducting live or hybrid collaboration sessions. Sec- ondary stakeholders include individual contributors who inherit tasks from meetings, and students whose comprehension often goes unmeasured in real time.
+What are they trying to achieve and where do they struggle? Both user segments share a common goal: ensuring that verbal decisions translate into documented, actionable commitments without manual overhead. Industry data validates the severity of current struggles:
+• 71% of all meetings are considered unproductive, costing businesses an estimated USD 34 billion annually [1].
+• Employees spend roughly 31 hours per month in unproductive meetings, and wasted meeting time has doubled since 2019 to approximately 5 hours per week in 2024 [2].
+• 55% of workers multitask during meetings, with 52% doing so "often or always" in virtual set- tings [3].
+• "Quiet meetings"-sessions where participants stay muted the entire time-rose to 7.2% in 2023, signaling growing passive attendance [4].
+Evidence sources: We corroborated these findings through industry reports (Asana, Pumble, Archie), public forum analysis (e.g., Reddit's r/projectmanagement), and informal interviews with four startup founders who confirmed that follow-up syncs consume 15-25% of their weekly calendars because verbal commitments are consistently lost.
+1.2 Existing Solutions & Substitutes
+We conducted a structured audit of the tools our target users rely on today:
+Key insight: Every incumbent is passive-they record, transcribe, and summarize after the fact.
+
+
+
+Tool / Workflow	Strengths	Key Gaps
+
+
+
+Otter.ai	Real-time transcription, speaker ID, mobile
+app, free tier. Pro from $8.33/user/mo.
+
+Fireflies.ai	100+ languages, CRM integration, senti-
+ment analysis. Pro from $10/user/mo.
+Fathom	Generous free tier (unlimited recording),
+quick summaries.
+Fellow.app	Structured agendas,	collaborative note-
+taking, 1:1 management. From $7/user/mo.
+
+Fully passive-no task extraction or engage- ment tracking. Privacy concerns (bot joins calls) [5].
+Passive capture; no real-time intervention or comprehension checks. Complex pricing [6].
+Limited to Zoom natively; no engagement scoring; basic action-item extraction [7].
+Requires heavy manual input for action items; no AI speech-level task extraction [8].
+
+Manual Notes	Zero cost, full privacy.	High error rate, no engagement data, deci- sion amnesia persists.
+
+
+None actively interrupt the meeting flow to confirm decisions or measure engagement.
+1.3 Product Scope & Differentiation
+Based on this evidence, we have refined MeetSync's scope. MeetSync is active, not passive. It acts as a "Black-Box Flight Recorder for Meetings" that also nudges participants mid-flight.
+What MeetSync must do (MVP scope):
+1. Real-time intent extraction-detect action items and decisions as they are spoken, surfacing them for instant speaker confirmation.
+2. Contextual engagement checkpoints-short, non-intrusive comprehension pulses triggered at natural conversation pauses.
+3. Post-meeting accountability report-auto-generated summary linking each decision to an owner with engagement metrics.
+What MeetSync will not attempt: We will explicitly exclude full meeting transcription (highly commoditized by Otter.ai), calendar/agenda management (Fellow.app's domain), and deep CRM inte- grations (Fireflies/Gong territory).
+
+2. Business Research
+2.1 Customer & Buyer Dynamics
+A persistent tension exists between the user and the buyer:
+• User (Employee/Developer): May perceive engagement scoring as surveillance or microman- agement.
+• Buyer (CTO/Team Lead): Sees immediate value in reducing follow-up syncs and improving team accountability.
+In our target segment of startups with 10-50 employees, purchasing decisions are made with minimal procurement bureaucracy. However, bottom-up adoption is critical. If developers refuse to use the tool, the buyer's mandate is moot. Evidence suggests users are desperate for solutions: 70% of employees say job satisfaction would improve with fewer meetings [1].
+2.2 Revenue & Cost Logic
+Pricing alignment: The SaaS meeting-assistant market has converged on clear per-user pricing: Ot- ter.ai Pro ($8.33), Fireflies Pro ($10), Fellow Team ($7), and Fathom Premium ($19). Our hypothesized
+$10/user/month for a Pro tier aligns perfectly with industry willingness-to-pay. The USD 34 billion annual cost of unproductive meetings indicates that even modest time savings justify this investment.
+Primary cost drivers:
+
+• LLM API costs: Real-time intent extraction requires streaming inference. SaaS prices rose 12.2% in 2024, partly driven by AI compute costs [14].
+• Cloud infrastructure: Real-time audio streaming (ASR) demands low-latency infrastructure; costs scale linearly with active meetings.
+To mitigate Phase 1 bankruptcy risks, we plan to strictly cap our free tier to 5 meetings per month (30-minute limits) to minimize GPU/API overhead.
+2.3 Business Risks & Constraints
+• Cultural resistance: With 86% of meetings now including at least one remote participant [2], users may feel alienated by "surveillance." We must rely on team-level aggregated engagement metrics rather than singling out individuals.
+• Compliance and governance: GDPR and the EU AI Act (enforced fully by 2026) strongly regulate AI meeting tools. Non-compliance can draw fines of up to EUR 20 million or 4% of turnover. Explicit consent flows are mandatory [16, 17].
+• Operational reliability: We are heavily dependent on third-party LLM APIs (OpenAI/Google). Outages or dramatic pricing changes directly threaten our margins and uptime.
+
+3. Market / Industry Research
+3.1 Market Context
+Target market: Remote-first or hybrid tech startups (10-50 employees) conducting regular agile meetings.
+Market size & trends: The global AI meeting-assistant market was valued at USD 2.44-2.76 billion in 2024 and is projected to grow at an aggressive CAGR of 24.7-28.2%, reaching USD 3.02-3.47 billion by 2025 [9,10]. The broader meeting-management software market stands at USD 4.72 billion [11]. Hybrid work is a permanent fixture: currently, 50% of remote-capable employees work in hybrid setups, and meeting volumes have tripled since 2020 [12].
+3.2 Competitive Landscape
+As identified in Product Research, direct competitors (Otter, Fireflies, Fathom, Avoma) domi- nate through passive transcription and broad integrations. Indirect competitors include Fellow.app (agendas) and Gong.io (enterprise sales coaching).
+Today, Otter.ai and Fireflies.ai win on breadth. They capture everything said. However, they leave a massive gap in depth. The entire market currently occupies the "passive capture" quadrant. No product occupies the "active, in-meeting intelligence" quadrant, validating MeetSync's unique positioning.
+3.3 Structural Barriers
+• Switching costs: Relatively low for users currently on free tiers (like basic Fathom or Otter), which favors new entrants like MeetSync. Higher for teams already entrenched in Fireflies' CRM ecosystem.
+• Regulatory/Legal constraints: Consent requirements and AI traceability mandate significant engineering overhead. By 2026, AI tools must guarantee full data auditability under the EU AI Act [18].
+• Organizational resistance: Overcoming the "big brother" perception is the most significant structural barrier to adoption.
+
+4. Economic Research (Macro Risks)
+Inflationary Pressure on AI SaaS: SaaS prices surged 12.2% in 2024-far outpacing the 2.7% general inflation rate-primarily as vendors passed along the massive infrastructure costs of AI com- puting [14]. For MeetSync, upstream costs (LLM tokens, GPU compute) are subject to AI-specific
+
+inflation. We must design our architecture and pricing tiers carefully to maintain sustainable profit margins.
+Interest Rates & Funding Environment: The "higher-for-longer" interest-rate environment con- tinues to compress early-stage valuations and make venture funding highly selective [15]. This economic reality reinforces our need for a capital-efficient, lean MVP strategy. We must achieve product-market fit on minimal burn.
+Geopolitical & Regulatory Landscape: Operating from Pakistan introduces currency-risk exposure (PKR vs. USD). The global regulatory landscape is tightening rapidly. The EU AI Act's phased enforcement demands that high-risk AI systems demonstrate full compliance by August 2026, including conformity assessments and human-oversight mechanisms [16]. GDPR already requires explicit consent and data-minimization for meeting recording tools [17]. Pakistan's pending Personal Data Protection Bill will further restrict data handling.
+
+5. Assumptions & Evidence
+Throughout Phase 2, we tested the assumptions outlined in Phase 1 against market evidence:
+
+IDAssumption / HypothesisStatusA1Verbal decisions are routinely lost in small-team meetings.Validated by statisticsA2Existing market tools are entirely passive; none confirm decisions.Validated by auditA3AI meeting-assistant market is large ($2.4B+) and growing rapidly.Validated by reportsA4Small-team leads will pay roughly $10/user/month for value.Partially ValidatedA5Developers and users will accept real-time engagement scoring.High-risk (untested)A6LLM API token costs will decline faster than user usage grows.Medium-riskA7A capped freemium tier will not unsustainably drain server costs.Medium-riskA8Regulatory compliance (GDPR/AI Act) is achievable for our MVP.High-risk
+
+6. Phase 2 Summary
+What assumptions were confirmed? Our research confirmed the core product thesis: verbal decisions are systematically lost in small-team meetings, causing significant financial and productivity drain. Furthermore, every existing tool in the market is passive. The market is large, growing at roughly 25% CAGR, and is structurally favorable for new entrants targeting the "active intelligence" engagement gap.
+What assumptions remain risky? Cultural acceptance (Assumption A5) is the most critical threat. Will users tolerate real-time engagement scoring, or will it feel too intrusive? This requires careful UX prototyping in Phase 3. Additionally, regulatory compliance (Assumption A8) under the new EU AI Act and GDPR poses a major engineering constraint.
+How has our product scope changed? We have intentionally narrowed our scope based on the competitive audit.
+• Removed: Full speech transcription (commoditized) and calendar/agenda management.
+• Retained & Refined: Real-time intent extraction, contextual engagement pulses, and auto- mated post-meeting accountability reports.
+• Added: Ephemeral-capture architecture (generating structured notes without long-term raw audio storage) and team-level data aggregation to drastically reduce our privacy compliance burden.
+What will our MVP in Phase 3 focus on and exclude? The Phase 3 MVP will focus strictly on a single platform integration (e.g., a Zoom or Google Meet plugin). It will detect action items in real
+
+time, prompt speakers for confirmation, and trigger lightweight, single-question engagement pulses at natural pauses. We will generate a post-meeting report linking tasks to owners.
+The MVP will exclude cross-platform support (Microsoft Teams deferred), complex CRM/Jira inte- grations, individual-level engagement scoring, and on-device NLP processing (which is too resource- intensive for an initial validation prototype).
+
+References
+[1] Pumble, "Meeting Statistics 2024: Time Wasted," 2024. [Online]. Available: https://pumble.com/learn/ meetings/meeting-statistics/
+[2] Archie, "Meeting Statistics 2024-2025: Productivity," 2024. [Online]. Available: https://archieapp.co/ blog/meeting-statistics/
+[3] Calendly, "State of Meetings 2024," 2024. [Online]. Available:	https://calendly.com/resources/  reports/state-of-meetings-2024
+[4] Forbes, "The Silent Evolution Of Meeting Culture," 2024. [Online]. Available: https://www.forbes.com/
+[5] Sally.io, "AI Meeting Assistant Comparison," 2024. [Online]. Available: https://sally.io/
+[6] Outdoo.ai, "Fireflies.ai Competitor Analysis," 2024. [Online]. Available: https://outdoo.ai/
+[7] Rimo, "Fathom AI Review and Alternatives," 2024. [Online]. Available: https://rimo.app/
+[8] Krisp, "Fellow.app vs Competitors," 2024. [Online]. Available: https://krisp.ai/
+[9] Technavio, "AI Meeting Assistants Market Size," 2024. [Online]. Available: https://www.technavio.com/
+[10] Research and Markets, "AI Meeting Assistants Market," 2024. [Online]. Available:	https://www. researchandmarkets.com/
+[11] Verified Market Research, "Meeting Management Software," 2024. [Online]. Available: https://www. verifiedmarketresearch.com/
+[12] Gallup, "Hybrid Work Trends 2024," 2024. [Online]. Available: https://www.gallup.com/
+[13] Alpha Learning Centre, "Productivity in Small Teams," 2024. [Online]. Available:	https:// alphalearningcentre.com/
+[14] Vertice, "SaaS Inflation Report 2024," 2024. [Online]. Available: https://www.vertice.one/
+[15] Long Finance, "Interest Rate Implications for Startups," 2024. [Online]. Available:	https://www. longfinance.net/
+[16] European Parliament, "EU AI Act-Regulation 2024/1689," 2024. [Online]. Available:	https:// artificialintelligenceact.eu/
+[17] SummarizeMeeting,	"GDPR Compliance for AI Tools,"	2024. [Online]. Available:	https:// summarizemeeting.com/
+[18] Sky-Scribe, "Meeting AI Compliance Roadmap," 2024. [Online]. Available: https://sky-scribe.com/
+
+
+
+
