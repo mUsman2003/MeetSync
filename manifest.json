@@ -7,8 +7,10 @@
     "activeTab",
     "scripting",
     "storage",
-    "downloads"
+    "downloads",
+    "sidePanel"
   ],
+  "minimum_chrome_version": "114",
   "host_permissions": [
     "https://meet.google.com/*"
   ],
@@ -18,12 +20,14 @@
   "content_scripts": [
     {
       "matches": ["https://meet.google.com/*"],
-      "js": ["content.js"],
+      "js": ["engagementStore.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
+  "side_panel": {
+    "default_path": "popup.html"
+  },
   "action": {
-    "default_popup": "popup.html",
     "default_title": "MeetSync",
     "default_icon": {
       "16": "icons/icon16.png",

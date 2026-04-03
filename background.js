@@ -6,6 +6,8 @@
 
 "use strict";
 
+importScripts("engagementStore.js");
+
 // ─── Extension Lifecycle ──────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
@@ -18,6 +20,24 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
       lastUpdated: null
     });
   }
+  if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  }
+});
+
+if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+}
+
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (!tab.url || !tab.url.includes("meet.google.com")) return;
+  if (info.status !== "complete") return;
+  if (!chrome.sidePanel || !chrome.sidePanel.setOptions) return;
+  chrome.sidePanel.setOptions({
+    tabId,
+    path: "popup.html",
+    enabled: true
+  }).catch(() => {});
 });
 
 // ─── Message Relay ─────────────────────────────────────────────────────────
@@ -81,6 +101,9 @@ async function clearSession(meetingId) {
   if (!meetingId) return;
   const key = `meet_${meetingId}`;
   await chrome.storage.local.remove(key);
+  if (typeof MeetSyncEngagement !== "undefined") {
+    await MeetSyncEngagement.clearEngagementForMeeting(meetingId);
+  }
   console.log(`[MeetSync] Cleared session: ${meetingId}`);
 }
 
@@ -111,6 +134,15 @@ async function exportSession(meetingId, format = "json") {
     return { ok: false, error: "No data found for this session." };
   }
 
+  let engagementV2 = null;
+  if (typeof MeetSyncEngagement !== "undefined") {
+    try {
+      engagementV2 = await MeetSyncEngagement.loadEngagementSummary(meetingId);
+    } catch (e) {
+      engagementV2 = null;
+    }
+  }
+
   let content, mimeType, filename;
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
@@ -120,6 +152,7 @@ async function exportSession(meetingId, format = "json") {
         meetingId,
         exportedAt: new Date().toISOString(),
         totalEntries: entries.length,
+        engagementV2,
         entries
       },
       null,
@@ -134,7 +167,16 @@ async function exportSession(meetingId, format = "json") {
       const escapedSender = `"${(e.sender || "").replace(/"/g, '""')}"`;
       return `${e.type},${e.timestamp},${escapedSender},${escapedMsg},${e.capturedAt}`;
     });
-    content = header + rows.join("\n");
+    let csv = header + rows.join("\n");
+    if (engagementV2 && engagementV2.participants && engagementV2.participants.length) {
+      csv += "\n\nENGAGEMENT_SUMMARY\n";
+      csv += "Name,ChatCount,ReactionCount,AttendanceMs,IsPresent\n";
+      engagementV2.participants.forEach((p) => {
+        const name = `"${(p.name || "").replace(/"/g, '""')}"`;
+        csv += `${name},${p.chatCount != null ? p.chatCount : 0},${p.reactionCount != null ? p.reactionCount : 0},${p.attendanceMs != null ? p.attendanceMs : ""},${p.isPresent ? "TRUE" : "FALSE"}\n`;
+      });
+    }
+    content = csv;
     mimeType = "text/csv";
     filename = `meetsync_${meetingId}_${timestamp}.csv`;
   } else {
@@ -172,7 +214,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   ) {
     chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js"]
+      files: ["engagementStore.js", "content.js"]
     }).catch(() => {
       // Script may already be injected — safe to ignore
     });

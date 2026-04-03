@@ -29,11 +29,16 @@ const scrollBtn         = document.getElementById("scrollBtn");
 const tabAll            = document.getElementById("tabAll");
 const tabTasks          = document.getElementById("tabTasks");
 const tabAttendees      = document.getElementById("tabAttendees");
+const tabEngagement     = document.getElementById("tabEngagement");
 const tabAllCount       = document.getElementById("tabAllCount");
 const tabTasksCount     = document.getElementById("tabTasksCount");
 const statMessages      = document.getElementById("statMessages");
 const statTasks         = document.getElementById("statTasks");
 const statAttendees     = document.getElementById("statAttendees");
+const statReactions     = document.getElementById("statReactions");
+const engagementPanel   = document.getElementById("engagementPanel");
+const engagementTableBody = document.getElementById("engagementTableBody");
+const engagementTable   = document.getElementById("engagementTable");
 
 // ─── State ────────────────────────────────────────────────────────────────
 let activeMeetingId  = null;
@@ -41,8 +46,13 @@ let allEntries       = [];         // All stored entries for current meeting
 let renderedIds      = new Set();  // IDs already rendered in the feed
 let isUserScrolled   = false;
 let port             = null;
-let activeFilter     = "all";      // "all" | "tasks" | "attendees"
+let activeFilter     = "all";      // "all" | "tasks" | "attendees" | "engagement"
 let participants     = new Map();  // name -> { joinedAt, leftAt, isPresent }
+/** @type {Array<Record<string, unknown>>} */
+let engagementRows   = [];
+let engagementTotals   = { reactionCount: 0, chatTelemetryCount: 0 };
+let engagementSortKey = "chatCount";
+let engagementSortDir = -1; // -1 desc, 1 asc
 let sessionStartTime = null;
 let durationTimer    = null;
 
@@ -89,16 +99,34 @@ function formatDuration(ms) {
   return `${m}:${String(sec).padStart(2,"0")}`;
 }
 
+function normalizeNameKey(name) {
+  if (!name) return "";
+  return String(name)
+    .replace(/\s+\([^)]+\)\s*$/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function findEngagementRow(name) {
+  const key = normalizeNameKey(name);
+  const row = engagementRows.find((r) => normalizeNameKey(r.name) === key);
+  return row || null;
+}
+
 // ─── Stats ────────────────────────────────────────────────────────────────
 
 function updateStats() {
   const msgCount  = allEntries.filter(e => e.type === "chat").length;
   const taskCount = allEntries.filter(e => e.isTask).length;
   const attCount  = participants.size;
+  const reactTot  = engagementTotals.reactionCount != null
+    ? engagementTotals.reactionCount
+    : engagementRows.reduce((a, r) => a + (r.reactionCount || 0), 0);
 
   statMessages.textContent  = msgCount;
   statTasks.textContent     = taskCount;
   statAttendees.textContent = attCount;
+  statReactions.textContent = String(reactTot);
   tabAllCount.textContent   = allEntries.length;
   tabTasksCount.textContent = taskCount;
 }
@@ -167,6 +195,15 @@ function renderAttendees() {
     
     const initials = getInitials(name);
     const color    = getAvatarColor(name);
+    const eng = findEngagementRow(name);
+    const engLine = eng
+      ? `<div class="attendee-metrics">
+          <span>Msgs: ${eng.chatCount != null ? eng.chatCount : "—"}</span>
+          <span>React: ${eng.reactionCount != null ? eng.reactionCount : "—"}</span>
+          <span>Presence: ${eng.attendanceMs != null ? formatDuration(eng.attendanceMs) : "—"}</span>
+        </div>`
+      : "";
+
     card.innerHTML = `
       <div class="attendee-avatar" style="background:${color}">${escapeHtml(initials)}</div>
       <div class="attendee-info">
@@ -175,9 +212,10 @@ function renderAttendees() {
           ${data.joinedAt ? `Joined ${escapeHtml(data.joinedAt)}` : ""}
           ${data.leftAt   ? ` &middot; Left ${escapeHtml(data.leftAt)}` : ""}
         </div>
+        ${engLine}
       </div>
       <div class="attendee-status ${data.isPresent ? "status-present" : "status-left"}">
-        ${data.isPresent ? "Present" : "Left"}
+        ${eng && typeof eng.isPresent === "boolean" ? (eng.isPresent ? "Present" : "Left") : (data.isPresent ? "Present" : "Left")}
       </div>`;
     attendeesPanel.appendChild(card);
   });
@@ -248,12 +286,23 @@ function clearFeed() {
 
 function applyFilter() {
   // Toggle panels
-  const showFeed      = activeFilter !== "attendees";
-  feedPanel.style.display      = showFeed ? "block" : "none";
-  attendeesPanel.style.display = showFeed ? "none"  : "block";
+  const showFeed =
+    activeFilter !== "attendees" && activeFilter !== "engagement";
+  feedPanel.style.display = showFeed ? "block" : "none";
+  attendeesPanel.style.display = activeFilter === "attendees" ? "block" : "none";
+  if (engagementPanel) {
+    engagementPanel.style.display = activeFilter === "engagement" ? "block" : "none";
+  }
 
   if (activeFilter === "attendees") {
+    scrollBtn.classList.remove("visible");
     renderAttendees();
+    return;
+  }
+
+  if (activeFilter === "engagement") {
+    scrollBtn.classList.remove("visible");
+    renderEngagement();
     return;
   }
 
@@ -309,16 +358,96 @@ function applyFilter() {
 
 function setActiveTab(filter) {
   activeFilter = filter;
-  [tabAll, tabTasks, tabAttendees].forEach(t => t.classList.remove("active"));
-  if (filter === "all")       tabAll.classList.add("active");
-  else if (filter === "tasks")tabTasks.classList.add("active");
-  else                        tabAttendees.classList.add("active");
+  [tabAll, tabTasks, tabAttendees, tabEngagement].forEach(t => t.classList.remove("active"));
+  if (filter === "all") tabAll.classList.add("active");
+  else if (filter === "tasks") tabTasks.classList.add("active");
+  else if (filter === "attendees") tabAttendees.classList.add("active");
+  else tabEngagement.classList.add("active");
   applyFilter();
 }
 
 tabAll.addEventListener("click",       () => setActiveTab("all"));
 tabTasks.addEventListener("click",     () => setActiveTab("tasks"));
 tabAttendees.addEventListener("click", () => setActiveTab("attendees"));
+tabEngagement.addEventListener("click", () => setActiveTab("engagement"));
+
+function renderEngagement() {
+  if (!engagementTableBody) return;
+  engagementTableBody.innerHTML = "";
+  const rows = [...engagementRows];
+  const key = engagementSortKey;
+  const dir = engagementSortDir;
+  rows.sort((a, b) => {
+    let va = a[key];
+    let vb = b[key];
+    if (key === "name") {
+      va = String(va || "");
+      vb = String(vb || "");
+      return dir * va.localeCompare(vb);
+    }
+    if (key === "isPresent") {
+      va = va ? 1 : 0;
+      vb = vb ? 1 : 0;
+    } else {
+      va = Number(va) || 0;
+      vb = Number(vb) || 0;
+    }
+    return dir * (vb - va);
+  });
+
+  if (rows.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">No engagement data yet. Open the People panel or chat in Meet.</td>`;
+    engagementTableBody.appendChild(tr);
+    return;
+  }
+
+  rows.forEach((r) => {
+    const tr = document.createElement("tr");
+    const pres = formatDuration(r.attendanceMs || 0);
+    const st = r.isPresent ? "Present" : "Left";
+    tr.innerHTML = `
+      <td class="eng-name">${escapeHtml(r.name || "")}</td>
+      <td>${r.chatCount != null ? r.chatCount : 0}</td>
+      <td>${r.reactionCount != null ? r.reactionCount : 0}</td>
+      <td>${r.attendanceMs != null ? pres : "—"}</td>
+      <td>${st}</td>`;
+    engagementTableBody.appendChild(tr);
+  });
+}
+
+if (engagementTable) {
+  engagementTable.addEventListener("click", (e) => {
+    const th = e.target.closest("th[data-sort]");
+    if (!th) return;
+    const k = th.getAttribute("data-sort");
+    if (engagementSortKey === k) engagementSortDir *= -1;
+    else {
+      engagementSortKey = k;
+      engagementSortDir = k === "name" ? 1 : -1;
+    }
+    renderEngagement();
+  });
+}
+
+async function loadEngagementData() {
+  engagementRows = [];
+  engagementTotals = { reactionCount: 0, chatTelemetryCount: 0 };
+  if (!activeMeetingId || typeof MeetSyncEngagement === "undefined") {
+    updateStats();
+    return;
+  }
+  try {
+    const s = await MeetSyncEngagement.loadEngagementSummary(activeMeetingId);
+    engagementRows = s.participants || [];
+    engagementTotals = s.totals || engagementTotals;
+  } catch (_) {
+    /* ignore */
+  }
+  updateStats();
+  if (activeFilter === "engagement") renderEngagement();
+  if (activeFilter === "attendees") renderAttendees();
+}
 
 // ─── Status UI ────────────────────────────────────────────────────────────
 
@@ -360,13 +489,19 @@ async function loadCurrentSession() {
     startDurationTimer();
   }
 
-  if (!meetingId) return;
+  if (!meetingId) {
+    engagementRows = [];
+    engagementTotals = { reactionCount: 0, chatTelemetryCount: 0 };
+    updateStats();
+    return;
+  }
 
   const key    = `meet_${meetingId}`;
   const result = await chrome.storage.local.get(key);
   allEntries   = result[key] || [];
 
   buildParticipantsFromEntries(allEntries);
+  await loadEngagementData();
   clearFeed();
   applyFilter();
 }
@@ -386,7 +521,10 @@ function connectBackground() {
           buildParticipantsFromEntries(allEntries);
           if (activeFilter === "attendees") renderAttendees();
         }
-        if (activeFilter !== "attendees") renderEntries([msg.entry]);
+        if (msg.entry.type === "chat") void loadEngagementData();
+        if (activeFilter !== "attendees" && activeFilter !== "engagement") {
+          renderEntries([msg.entry]);
+        }
         updateStats();
         break;
 
@@ -398,8 +536,11 @@ function connectBackground() {
         updateMeetingDisplay(msg.meetingId);
         allEntries = [];
         participants.clear();
+        engagementRows = [];
+        engagementTotals = { reactionCount: 0, chatTelemetryCount: 0 };
         clearFeed();
         if (msg.startTime) { sessionStartTime = msg.startTime; startDurationTimer(); }
+        void loadEngagementData();
         break;
     }
   });
@@ -480,9 +621,17 @@ function downloadBlob(content, filename, mimeType) {
 async function exportJSON() {
   if (!activeMeetingId || !allEntries.length) { setStatus("warning", "No data to export."); return; }
   const summary   = buildSummary();
+  let engagementV2 = null;
+  if (typeof MeetSyncEngagement !== "undefined") {
+    try {
+      engagementV2 = await MeetSyncEngagement.loadEngagementSummary(activeMeetingId);
+    } catch (_) {
+      engagementV2 = null;
+    }
+  }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   downloadBlob(
-    JSON.stringify({ ...summary, entries: allEntries }, null, 2),
+    JSON.stringify({ ...summary, engagementV2, entries: allEntries }, null, 2),
     `meetsync_${activeMeetingId}_${timestamp}.json`,
     "application/json"
   );
@@ -504,8 +653,20 @@ async function exportCSV() {
     const capAt  = `"${(e.capturedAt || "").replace(/"/g,'""')}"`;
     return `${e.type},"${e.timestamp}",${sender},${msg},${e.isTask ? "TRUE" : "FALSE"},${capAt}`;
   });
+  let csv = header + rows.join("\r\n");
+  if (typeof MeetSyncEngagement !== "undefined") {
+    try {
+      const eng = await MeetSyncEngagement.loadEngagementSummary(activeMeetingId);
+      csv += "\r\n\r\nENGAGEMENT_SUMMARY\r\n";
+      csv += "Name,ChatCount,ReactionCount,AttendanceMs,IsPresent\r\n";
+      (eng.participants || []).forEach((p) => {
+        const name = `"${(p.name || "").replace(/"/g, '""')}"`;
+        csv += `${name},${p.chatCount != null ? p.chatCount : 0},${p.reactionCount != null ? p.reactionCount : 0},${p.attendanceMs != null ? p.attendanceMs : ""},${p.isPresent ? "TRUE" : "FALSE"}\r\n`;
+      });
+    } catch (_) { /* ignore */ }
+  }
   downloadBlob(
-    header + rows.join("\r\n"),
+    csv,
     `meetsync_${activeMeetingId}_${timestamp}.csv`,
     "text/csv;charset=utf-8;"
   );
@@ -516,7 +677,12 @@ async function clearSession() {
   if (!activeMeetingId) return;
   if (!confirm(`Clear all data for meeting ${activeMeetingId}?`)) return;
   await chrome.storage.local.remove(`meet_${activeMeetingId}`);
+  if (typeof MeetSyncEngagement !== "undefined") {
+    await MeetSyncEngagement.clearEngagementForMeeting(activeMeetingId);
+  }
   allEntries = []; participants.clear();
+  engagementRows = [];
+  engagementTotals = { reactionCount: 0, chatTelemetryCount: 0 };
   clearFeed(); updateStats();
   setStatus("active", "Session cleared.");
 }
@@ -547,5 +713,15 @@ clearBtn.addEventListener("click", clearSession);
 
 // ─── Init ─────────────────────────────────────────────────────────────────
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !activeMeetingId) return;
+  const keys = Object.keys(changes);
+  const metaKey = "meetms_meta_" + activeMeetingId;
+  const hit = keys.some(
+    (k) => k === metaKey || k.startsWith("P-") || k.startsWith("D-")
+  );
+  if (hit) void loadEngagementData();
+});
+
 connectBackground();
-loadCurrentSession();
+void loadCurrentSession();

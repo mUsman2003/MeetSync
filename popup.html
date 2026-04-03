@@ -27,10 +27,13 @@
       --radius-sm: 5px;
     }
 
+    /* Fills Chrome side panel (pinned right); still usable if opened as a window */
     body {
-      width: 400px;
+      width: 100%;
+      min-width: 300px;
+      max-width: 440px;
       min-height: 520px;
-      max-height: 620px;
+      max-height: 100vh;
       background: var(--bg);
       color: var(--text);
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -81,7 +84,7 @@
 
     /* ── Summary Stats ───────────────────────────────────────── */
     .stats-bar {
-      display: flex; gap: 6px; padding: 8px 12px;
+      display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px;
       background: var(--bg);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
@@ -101,6 +104,7 @@
     .stat-label { font-size: 9.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
     .stat-card.tasks-card .stat-value { color: var(--yellow); }
     .stat-card.attendees-card .stat-value { color: var(--green); }
+    .stat-card.reactions-card .stat-value { color: var(--event-color); }
 
     /* ── Filter Tabs ─────────────────────────────────────────── */
     .tabs {
@@ -264,6 +268,40 @@
     }
     .status-present { background: rgba(62,207,142,0.12); color: var(--green); }
     .status-left    { background: rgba(74,79,106,0.2);   color: var(--text-muted); }
+    .attendee-metrics {
+      font-size: 10px; color: var(--text-muted); margin-top: 4px;
+      display: flex; gap: 10px; flex-wrap: wrap;
+    }
+    .attendee-metrics span { font-variant-numeric: tabular-nums; }
+
+    /* ── Engagement panel ───────────────────────────────────── */
+    #engagementPanel {
+      display: none;
+      padding: 8px;
+      overflow-x: auto;
+    }
+    .eng-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11.5px;
+    }
+    .eng-table th {
+      text-align: left;
+      color: var(--text-muted);
+      font-weight: 600;
+      padding: 6px 4px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+    }
+    .eng-table th:hover { color: var(--accent); }
+    .eng-table td {
+      padding: 7px 4px;
+      border-bottom: 1px solid rgba(46,50,73,0.5);
+      color: var(--text-dim);
+    }
+    .eng-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .eng-name { font-weight: 600; color: var(--text); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ── Duration chip (in status bar) ──────────────────────── */
     .duration-chip {
@@ -359,6 +397,11 @@
       <span class="stat-value" id="statAttendees">0</span>
       <span class="stat-label">Attendees</span>
     </div>
+    <div class="stat-card reactions-card">
+      <span class="stat-icon">😀</span>
+      <span class="stat-value" id="statReactions">0</span>
+      <span class="stat-label">Reactions</span>
+    </div>
   </div>
 
   <!-- ── Filter Tabs ── -->
@@ -371,6 +414,9 @@
     </button>
     <button class="tab" id="tabAttendees">
       👥 Attendees
+    </button>
+    <button class="tab" id="tabEngagement">
+      📊 Engagement
     </button>
   </div>
 
@@ -408,6 +454,23 @@
       <div class="attendees-heading">Meeting Attendees</div>
     </div>
 
+    <!-- Engagement (v2 telemetry) -->
+    <div id="engagementPanel">
+      <div class="attendees-heading">Per-participant engagement</div>
+      <table class="eng-table" id="engagementTable">
+        <thead>
+          <tr>
+            <th data-sort="name">Name</th>
+            <th data-sort="chatCount">Msgs</th>
+            <th data-sort="reactionCount">React</th>
+            <th data-sort="attendanceMs">Presence</th>
+            <th data-sort="isPresent">Status</th>
+          </tr>
+        </thead>
+        <tbody id="engagementTableBody"></tbody>
+      </table>
+    </div>
+
     <button class="scroll-btn" id="scrollBtn">↓ New messages</button>
   </div>
 
@@ -419,6 +482,7 @@
     <button class="btn" id="clearBtn" title="Clear current session">🗑 Clear</button>
   </div>
 
+  <script src="engagementStore.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

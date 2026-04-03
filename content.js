@@ -20,6 +20,14 @@
     let urlWatcher = null;
     let sessionStartTime = null;     // Timestamp when current meeting started
   
+    // ─── Engagement v2 (DOM attendance + reactions + chat telemetry) ───────────
+    /** @type {Map<string, { name: string, avatar: string }>} */
+    let engPrevParticipants = new Map();
+    /** Maps normalized name key → Meet `data-participant-id` so chat/reactions use same id as attendance. */
+    let engNameToParticipantId = new Map();
+    let engReactionsObserver = null;
+    let engReactionsNode = null;
+  
     // ─── Helpers ──────────────────────────────────────────────────────────────
   
     /**
@@ -63,6 +71,8 @@
       try { if (observer) observer.disconnect(); } catch (_) {}
       try { if (systemObserver) systemObserver.disconnect(); } catch (_) {}
       try { if (urlWatcher) urlWatcher.disconnect(); } catch (_) {}
+      detachReactionObserver();
+      engNameToParticipantId = new Map();
 
       observer = null;
       systemObserver = null;
@@ -118,7 +128,7 @@
     const UI_NOISE = new Set([
       "keep", "pin message", "unpin message", "you",
       "react", "remove reaction", "more options", "reply",
-      "copy link", "report", "delete", "edit"
+      "copy link", "report", "delete", "edit", "keepPin message"  
     ]);
   
     function isNoise(text) {
@@ -130,6 +140,7 @@
       const squashed = raw.replace(/\s+/g, "").replace(/[^a-z]/g, "");
       const noiseTokens = [
         "keep",
+        "keepPinmessage",
         "pinmessage",
         "unpinmessage",
         "moreoptions",
@@ -354,6 +365,10 @@
         chrome.runtime.sendMessage({ type: "NEW_ENTRY", entry }).catch((err) => {
           if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
         });
+
+        if (entry.type === "chat" && typeof MeetSyncEngagement !== "undefined") {
+          recordChatEngagement(entry).catch(() => {});
+        }
       } catch (err) {
         if (isContextInvalidatedError(err)) {
           invalidateExtensionContext(err);
@@ -361,6 +376,210 @@
         }
         console.warn("[MeetSync] Storage error:", err);
       }
+    }
+
+    /**
+     * Per-participant chat telemetry (encoded) alongside main feed entries.
+     */
+    async function recordChatEngagement(entry) {
+      if (!currentMeetingId || !MeetSyncEngagement) return;
+      const meta = await MeetSyncEngagement.ensureMeetingMeta(currentMeetingId);
+      if (!meta) return;
+      let name = entry.sender || "Unknown";
+      if (name.toLowerCase() === "you" || name === "__ME__") {
+        name = getLocalUserName() || name;
+      }
+      const nk = MeetSyncEngagement.normalizeNameKey(name);
+      const meetPid = nk ? engNameToParticipantId.get(nk) : null;
+      const payload = entry.message || "";
+      const enc = MeetSyncEngagement.encodeEvent(
+        "chat",
+        Date.now(),
+        meta.firstSeen,
+        payload
+      );
+      await MeetSyncEngagement.recordParticipantEvents(
+        currentMeetingId,
+        name,
+        "",
+        [enc],
+        meetPid
+      );
+    }
+
+    /** Refresh name → Meet participant id map before chat scan so telemetry shares one row with attendance. */
+    function refreshEngagementNameMap() {
+      engNameToParticipantId.clear();
+      if (typeof MeetSyncEngagement === "undefined") return;
+      const snap = collectParticipantSnapshots();
+      for (const [id, s] of snap) {
+        const nk = MeetSyncEngagement.normalizeNameKey(s.name);
+        if (nk) engNameToParticipantId.set(nk, id);
+      }
+    }
+
+    /**
+     * Collects participants from People side panel or video grid (data-participant-id).
+     */
+    function collectParticipantSnapshots() {
+      /** @type {Map<string, { name: string, avatar: string }>} */
+      const map = new Map();
+      if (typeof MeetSyncEngagement === "undefined") return map;
+      const panel = document.querySelector("div[data-panel-container-id=sidePanel1]");
+      const contributorsList = panel && panel.querySelector("div[role='list']");
+      if (contributorsList) {
+        contributorsList.querySelectorAll("[data-participant-id]").forEach((node) => {
+          const id = node.getAttribute("data-participant-id");
+          if (!id) return;
+          let name =
+            node.querySelector("img")?.parentElement?.nextElementSibling?.firstElementChild?.firstElementChild
+              ?.textContent || "";
+          name = (name || "").replace(/\u202F/g, " ").trim();
+          if (name.includes("(")) name = name.split("(")[0].trim();
+          const avatar = node.querySelector("img")?.getAttribute("src") || "";
+          if (name && name.length >= 2) {
+            map.set(id, {
+              name: MeetSyncEngagement.normalizeDisplayName(name),
+              avatar
+            });
+          }
+        });
+      }
+      if (map.size === 0) {
+        const tile = document.querySelector("div[data-participant-id]:not([role])");
+        const gridRoot = tile && tile.parentElement && tile.parentElement.parentElement;
+        if (gridRoot) {
+          const firstClass = gridRoot.firstElementChild && gridRoot.firstElementChild.classList[0];
+          Array.from(gridRoot.children).forEach((node) => {
+            if (firstClass && node.classList[0] !== firstClass) return;
+            const inner = node.firstElementChild;
+            const id = inner && inner.getAttribute("data-participant-id");
+            if (!id) return;
+            const nameEl = node.querySelector("div[jsslot] > div");
+            let name = nameEl ? (nameEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
+            if (name.includes("(")) name = name.split("(")[0].trim();
+            const avatar = node.querySelector("img")?.getAttribute("src") || "";
+            if (name && name.length >= 2) {
+              map.set(id, {
+                name: MeetSyncEngagement.normalizeDisplayName(name),
+                avatar
+              });
+            }
+          });
+        }
+      }
+      return map;
+    }
+
+    /**
+     * DOM-based join/leave vs previous snapshot (reference: example/script/Meeting.js).
+     */
+    async function syncEngagementAttendance() {
+      if (!extensionContextValid || !currentMeetingId || typeof MeetSyncEngagement === "undefined") {
+        return;
+      }
+      const meta = await MeetSyncEngagement.ensureMeetingMeta(currentMeetingId);
+      if (!meta) return;
+      const current = collectParticipantSnapshots();
+      if (current.size === 0) return;
+
+      const now = Date.now();
+      for (const [id, snap] of current) {
+        if (!engPrevParticipants.has(id)) {
+          const enc = MeetSyncEngagement.encodeEvent("join", now, meta.firstSeen, "");
+          await MeetSyncEngagement.recordParticipantEvents(
+            currentMeetingId,
+            snap.name,
+            snap.avatar,
+            [enc],
+            id
+          );
+        }
+      }
+      for (const [id, snap] of engPrevParticipants) {
+        if (!current.has(id)) {
+          const enc = MeetSyncEngagement.encodeEvent("leave", now, meta.firstSeen, "");
+          await MeetSyncEngagement.recordParticipantEvents(
+            currentMeetingId,
+            snap.name,
+            snap.avatar,
+            [enc],
+            id
+          );
+        }
+      }
+      engPrevParticipants = new Map(current);
+    }
+
+    function detachReactionObserver() {
+      if (engReactionsObserver) {
+        try {
+          engReactionsObserver.disconnect();
+        } catch (_) {}
+      }
+      engReactionsObserver = null;
+      engReactionsNode = null;
+    }
+
+    /**
+     * Emoji reactions in grid (reference Meeting._onReactionMutation).
+     */
+    function tryAttachReactionObserver() {
+      if (!extensionContextValid || !currentMeetingId || typeof MeetSyncEngagement === "undefined") {
+        return;
+      }
+      const gridNode = document.querySelector("div[data-participant-id]:not([role])")?.parentElement?.parentElement;
+      if (!gridNode) {
+        detachReactionObserver();
+        return;
+      }
+      const last = gridNode.lastElementChild;
+      const r1 = last && last.previousElementSibling;
+      const r2 = r1 && r1.previousElementSibling;
+      const r3 = r2 && r2.previousElementSibling;
+      const reactionsNode =
+        r3 &&
+        r3.firstElementChild &&
+        r3.firstElementChild.firstElementChild &&
+        r3.firstElementChild.firstElementChild.firstElementChild;
+
+      if (!reactionsNode || reactionsNode === engReactionsNode) return;
+
+      detachReactionObserver();
+      engReactionsNode = reactionsNode;
+      engReactionsObserver = new MutationObserver((mutations) => {
+        const ev = mutations.find((m) => m.addedNodes && m.addedNodes.length);
+        if (!ev || !ev.addedNodes) return;
+        const blob = ev.addedNodes[0] && ev.addedNodes[0].querySelector && ev.addedNodes[0].querySelector("html-blob");
+        if (!blob) return;
+        const nameRaw = blob.nextElementSibling && blob.nextElementSibling.textContent;
+        const name = (nameRaw || "")
+          .split(/\s+/g)
+          .map((x) => (x ? x[0].toUpperCase() + x.slice(1) : ""))
+          .join(" ");
+        const emoji = blob.querySelector("img") && blob.querySelector("img").getAttribute("alt");
+        if (!name || !emoji) return;
+        void (async () => {
+          const meta = await MeetSyncEngagement.ensureMeetingMeta(currentMeetingId);
+          if (!meta) return;
+          const nk = MeetSyncEngagement.normalizeNameKey(name);
+          const meetPid = nk ? engNameToParticipantId.get(nk) : null;
+          const enc = MeetSyncEngagement.encodeEvent(
+            "emoji",
+            Date.now(),
+            meta.firstSeen,
+            emoji || "?"
+          );
+          await MeetSyncEngagement.recordParticipantEvents(
+            currentMeetingId,
+            name,
+            "",
+            [enc],
+            meetPid
+          );
+        })();
+      });
+      engReactionsObserver.observe(reactionsNode, { childList: true });
     }
   
     // ─── Chat Extraction ──────────────────────────────────────────────────────
@@ -684,44 +903,9 @@
         }
       }
 
-      // 2. Scrape names from the People panel if open
-      const peoplePanel = document.querySelector('[aria-label="Participants" i], [aria-label="People" i]');
-      if (peoplePanel) {
-        const nameEls = peoplePanel.querySelectorAll('[jsname="unp99"], .zW4Ivb');
-        nameEls.forEach(el => {
-          let name = el.textContent.trim();
-          if (!name || name.length < 2 || name.toLowerCase().includes("more_vert")) return;
-          
-          // Filter out timestamps and relative times
-          if (/\d+ (?:sec|min|hour|day)s? (?:ago|left)/i.test(name)) return;
-          
-          // If we see "(You)", resolve it to our localUserName or keep as "You"
-          if (name.includes("(You)")) {
-            name = name.replace("(You)", "").trim();
-            if (name && !localUserName) localUserName = name;
-          }
-
-          if (name) {
-             const timeStr = new Date().toLocaleTimeString();
-             const uniqueKey = makeEventId({ time: "", text: `${name} active` });
-             
-             // Save as a "sync" event if not recently seen
-             const entry = {
-               id: uniqueKey,
-               type: "event",
-               timestamp: timeStr,
-               sender: "System",
-               message: `${name} is present`,
-               isJoin: true,
-               isLeave: false,
-               participantName: name,
-               isSync: true, // Marker for background sync
-               capturedAt: new Date().toISOString()
-             };
-             saveEntry(entry);
-          }
-        });
-      }
+      // 2. Engagement v2: DOM-based join/leave + reaction observer (no spammy feed events)
+      void syncEngagementAttendance();
+      tryAttachReactionObserver();
     }
   
     // ─── Chat Panel Detection ─────────────────────────────────────────────────
@@ -772,6 +956,12 @@
         console.log(`[MeetSync] New meeting detected: ${meetId}`);
         currentMeetingId = meetId;
         seenIds.clear();
+        engPrevParticipants = new Map();
+        engNameToParticipantId = new Map();
+        detachReactionObserver();
+        if (typeof MeetSyncEngagement !== "undefined") {
+          MeetSyncEngagement.ensureMeetingMeta(meetId).catch(() => {});
+        }
   
         // Store the new session info (do NOT clear old session data)
         sessionStartTime = Date.now();
@@ -820,6 +1010,7 @@
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         if (!extensionContextValid) return;
+        refreshEngagementNameMap();
         detectChatPanelState();
         scanChatMessages();
         scanSystemEvents();

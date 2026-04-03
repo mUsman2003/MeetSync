@@ -26,7 +26,7 @@ MeetSync runs silently in the background during any Google Meet session and:
 | ⚡ **Action-item detection** | Flags messages containing task signals (deadlines, @mentions, obligation keywords) |
 | 👥 **Participant tracking** | Logs join/leave events and builds an attendee list with timestamps |
 | ⏱ **Session duration** | Tracks meeting duration from first detection |
-| 📊 **Live popup dashboard** | Shows a live feed sorted by filter: All / Action Items / Attendees |
+| 📊 **Side panel dashboard** | Opens in Chrome’s **side panel** (pinned on the right) with filters: All / Action Items / Attendees / Engagement |
 | ⬇ **Export** | Downloads structured JSON or CSV after the meeting |
 
 ---
@@ -63,14 +63,15 @@ MeetSync is a Chrome Extension (Manifest V3). It is not published on the Chrome 
 2. **Open the chat panel** in Google Meet (the chat icon in the bottom toolbar)
    > ⚠️ The chat panel must remain open for MeetSync to capture messages
 
-3. **Click the MeetSync icon** in your Chrome toolbar to open the popup
+3. **Click the MeetSync icon** in your Chrome toolbar to open the **side panel** (docked on the right, stays open while you use Meet). Requires **Chrome 114+**. If the panel does not open, use the puzzle menu → MeetSync → **Open side panel**.
 
 4. Use the **filter tabs** to switch views:
    - **📋 All** — full chronological feed of all messages and events
    - **⚡ Action Items** — only messages flagged as tasks or assignments
-   - **👥 Attendees** — participant list with join/leave timestamps
+   - **👥 Attendees** — participant list with join/leave timestamps (plus per-person message / reaction / presence metrics when available)
+   - **📊 Engagement** — sortable table of per-participant chat counts, reactions, and presence time
 
-5. After the meeting, click **⬇ JSON** or **⬇ CSV** to export the captured data
+5. After the meeting, click **⬇ JSON** or **⬇ CSV** to export the captured data (JSON/CSV include an **engagement** summary when v2 telemetry exists)
 
 ---
 
@@ -85,10 +86,12 @@ content.js (MutationObserver)
   • Extracts: sender, message, timestamp
   • Runs detectIsTask() heuristic on each message
   • Listens for join/leave toast notifications
+  • Engagement v2: People panel / video grid attendance, emoji reactions, per-person chat counts (encoded events in `engagementStore.js`)
       │
       ▼
 chrome.storage.local
-  • Persists all entries keyed by meeting ID (meet_<id>)
+  • Persists feed entries keyed by meeting ID (`meet_<id>`)
+  • Persists engagement roster + encoded events (`meetms_meta_<id>`, `P-<dataId>`, `D-<dataId>-<participantHash>`)
   • Sessions survive popup close/open cycles
       │
       ▼
@@ -99,9 +102,9 @@ background.js (Service Worker)
       ▼
 popup.html / popup.js
   • Reads storage on open; listens for live updates via port
-  • Renders feed; filters by All / Action Items / Attendees
+  • Renders feed; filters by All / Action Items / Attendees / Engagement
   • Runs session duration timer
-  • Builds summary and triggers file download on export
+  • Builds summary and triggers file download on export (includes `engagementV2` in JSON and an `ENGAGEMENT_SUMMARY` block in CSV)
 ```
 
 ### Action-Item Detection
@@ -138,6 +141,19 @@ MeetSync uses a keyword + pattern heuristic (no LLM) to flag messages as action 
     { "sender": "Alice Khan", "message": "Bob can you send the report by EOD?", "timestamp": "10:15 AM" }
   ],
   "knownLimitations": ["..."],
+  "engagementV2": {
+    "meta": { "dataId": "…", "firstSeen": 1712064000000 },
+    "participants": [
+      {
+        "name": "Alice Khan",
+        "chatCount": 3,
+        "reactionCount": 1,
+        "attendanceMs": 120000,
+        "isPresent": true
+      }
+    ],
+    "totals": { "reactionCount": 2, "chatTelemetryCount": 10 }
+  },
   "entries": [ ... ]
 }
 ```
@@ -148,6 +164,10 @@ MeetSync uses a keyword + pattern heuristic (no LLM) to flag messages as action 
 Type,Timestamp,Sender,Message,IsActionItem,CapturedAt
 chat,10:15 AM,Alice Khan,"Bob can you send the report by EOD?",TRUE,2026-04-02T05:15:00.000Z
 event,10:20 AM,System,"Bob Malik left",FALSE,2026-04-02T05:20:00.000Z
+
+ENGAGEMENT_SUMMARY
+Name,ChatCount,ReactionCount,AttendanceMs,IsPresent
+"Alice Khan",3,1,120000,TRUE
 ```
 
 ---
@@ -160,6 +180,7 @@ event,10:20 AM,System,"Bob Malik left",FALSE,2026-04-02T05:20:00.000Z
 | **Task detection is heuristic** — pattern-based, not LLM-based | May miss subtle phrasing; false positives possible |
 | **Chat panel must stay open** — Meet destroys chat DOM when panel closes | User must keep panel open throughout the meeting |
 | **Join/leave depends on Meet notifications** — some builds hide these | Participant list may be incomplete |
+| **Engagement (grid / People panel)** — DOM selectors for tiles and reactions can change | Attendance and reaction counts may be incomplete until panels are visible |
 | **Google Meet DOM dependent** — Works against Meet's current CSS class names which may change | Extension may need updates after Meet UI changes |
 | **English-language patterns only** | Task detection will miss non-English task language |
 
