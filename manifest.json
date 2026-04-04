@@ -2,39 +2,21 @@
   "manifest_version": 3,
   "name": "MeetSync",
   "version": "1.0.0",
-  "description": "Silently extracts and exports Google Meet chat logs and participant events in real-time.",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "storage",
-    "downloads",
-    "sidePanel"
-  ],
-  "minimum_chrome_version": "114",
-  "host_permissions": [
-    "https://meet.google.com/*",
-    "https://*"
-  ],
+  "description": "Track participant attendance and chat messages in Google Meet — AI Product MVP",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://meet.google.com/*"],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://meet.google.com/*"
-      ],
-      "js": [
-        "engagementStore.js",
-        "content.js"
-      ],
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content.js"],
       "run_at": "document_idle"
     }
   ],
-  "side_panel": {
-    "default_path": "popup.html"
-  },
   "action": {
-    "default_title": "MeetSync",
+    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
