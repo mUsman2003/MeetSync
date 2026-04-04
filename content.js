@@ -7,6 +7,22 @@
 (function () {
     "use strict";
   
+    // ─── Force Meet to render in background ───────────────────────────────────
+    // Google Meet pauses DOM updates for captions and chat when the tab is hidden.
+    // Inject a script into the MAIN DOM world to spoof visibilityState.
+    function forceForeground() {
+      const script = document.createElement("script");
+      script.textContent = `
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+        Object.defineProperty(document, 'hidden', { get: () => false });
+        window.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);
+        document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);
+      `;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    }
+    forceForeground();
+
     // ─── State ────────────────────────────────────────────────────────────────
     const seenIds = new Set();       // Deduplication set
     const recentSystemTexts = new Map(); // text -> lastSeenMs
@@ -19,6 +35,16 @@
     let extensionContextValid = true;
     let urlWatcher = null;
     let sessionStartTime = null;     // Timestamp when current meeting started
+  
+    // ─── Caption / Live Transcription State ──────────────────────────────────
+    let captionObserver = null;      // MutationObserver for captions
+    let captionContainer = null;     // The DOM node holding live captions
+    let captionBuffer = "";          // Accumulates the current caption line
+    let captionSpeaker = "";         // Current speaker shown in captions
+    let captionFlushTimer = null;    // Debounce timer for flushing finalized caption
+    const recentCaptions = [];       // Sliding window for dedup (last N captions)
+    const CAPTION_DEDUP_WINDOW = 20; // How many recent captions to keep for dedup
+    const seenCaptionHashes = new Set(); // Hash-based dedup for stored captions
   
     // ─── Engagement v2 (DOM attendance + reactions + chat telemetry) ───────────
     /** @type {Map<string, { name: string, avatar: string }>} */
@@ -72,6 +98,7 @@
       try { if (systemObserver) systemObserver.disconnect(); } catch (_) {}
       try { if (urlWatcher) urlWatcher.disconnect(); } catch (_) {}
       detachReactionObserver();
+      detachCaptionObserver();
       engNameToParticipantId = new Map();
 
       observer = null;
@@ -581,8 +608,172 @@
       });
       engReactionsObserver.observe(reactionsNode, { childList: true });
     }
+
+    // ─── Caption / Live Transcription Extraction ─────────────────────────────
+
+    let lastCapturedText = "";
+
+    function isNoise(text) {
+      if (!text || text.length < 2) return true;
+      if (/arrow_downward|jump to bottom/i.test(text)) return true;
+      return false;
+    }
+
+    /**
+     * Start observing for captions.
+     * We observe the entire document body for the insertion of new texts.
+     * Meet frequently obfuscates classes; we target nodes with typical properties
+     * (like specific class patterns or 'dir' attrs) and verify it's a caption.
+     */
+    function tryAttachCaptionObserver() {
+      if (!extensionContextValid || !currentMeetingId) return;
+      if (captionObserver) return; // Already observing
+
+      captionObserver = new MutationObserver((mutations) => {
+        if (!extensionContextValid || !currentMeetingId) return;
+
+        let foundCaption = false;
+        let latestTextChunk = "";
+
+        mutations.forEach((mutation) => {
+          if (mutation.addedNodes.length) {
+            mutation.addedNodes.forEach((node) => {
+              if (node.nodeType === 1 && node.classList) {
+                // Meet uses specific wrappers for captions.
+                // The user provided structure shows the text is inside `div.ygicle`.
+                // We use a broad check for known caption classes or `dir="ltr"`.
+                
+                // Directly check if this is the text container itself:
+                if (node.classList.contains('CNusmb') || 
+                    node.classList.contains('ygicle') || 
+                    node.getAttribute('dir') === 'ltr') {
+                  
+                  const newText = (node.innerText || node.textContent || "").replace(/\u202F/g, " ").trim();
+                  
+                  if (newText && !isNoise(newText)) {
+                    latestTextChunk = newText;
+                    foundCaption = true;
+                  }
+                } 
+                // Alternatively, the node might be the outer block (`nMcdL`), so scan inside:
+                else {
+                  const textContainers = node.querySelectorAll('.CNusmb, .ygicle, [dir="ltr"]');
+                  textContainers.forEach((tc) => {
+                    const newText = (tc.innerText || tc.textContent || "").replace(/\u202F/g, " ").trim();
+                    if (newText && !isNoise(newText)) {
+                      latestTextChunk = newText;
+                      foundCaption = true;
+                    }
+                  });
+                }
+              }
+            });
+          }
+          // Also listen for direct text modifications (characterData)
+          else if (mutation.type === "characterData" && mutation.target) {
+             const parent = mutation.target.parentElement;
+             if (parent && (parent.classList.contains('CNusmb') || parent.classList.contains('ygicle') || parent.getAttribute('dir') === 'ltr')) {
+                 const newText = (parent.innerText || parent.textContent || "").replace(/\u202F/g, " ").trim();
+                 if (newText && !isNoise(newText)) {
+                   latestTextChunk = newText;
+                   foundCaption = true;
+                 }
+             }
+          }
+        });
+
+        // If we extracted a valid text chunk, buffer it and debounce the save.
+        if (latestTextChunk && latestTextChunk !== lastCapturedText) {
+          captionBuffer = latestTextChunk;
+          
+          if (captionFlushTimer) clearTimeout(captionFlushTimer);
+          captionFlushTimer = setTimeout(() => {
+             if (captionBuffer && captionBuffer !== lastCapturedText) {
+                lastCapturedText = captionBuffer;
+                saveCaptionEntry(captionBuffer);
+             }
+             captionBuffer = "";
+          }, 1500); // Wait 1.5s after the last word is spoken before saving the line
+        }
+
+        // Notify popup that captions are active if we found one
+        if (foundCaption && extensionContextValid) {
+           chrome.runtime.sendMessage({ type: "CAPTION_STATE", enabled: true }).catch((err) => {
+             if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+           });
+        }
+      });
+
+
+      // Observe the whole body since the caption container appears dynamically
+      captionObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+
+      console.log("[MeetSync] DOM observer initialized. Waiting for captions...");
+    }
+
+    /**
+     * Stop observing captions.
+     */
+    function detachCaptionObserver() {
+      if (captionObserver) {
+        try { captionObserver.disconnect(); } catch (_) {}
+      }
+      captionObserver = null;
+      lastCapturedText = "";
+    }
+
+    /**
+     * Saves a finalized caption entry to storage and notifies the popup.
+     * Only saves the TEXT — no speaker name as per user request.
+     */
+    async function saveCaptionEntry(text) {
+      if (!extensionContextValid || !isExtensionApiAvailable() || !currentMeetingId) return;
+      if (!text || text.length < 2) return;
+
+      // Hash-based dedup
+      const h = hashString(normalizeForId(text));
+      if (seenCaptionHashes.has(h)) return;
+
+      // Sliding window near-dedup
+      const normText = normalizeForId(text);
+      for (const rc of recentCaptions) {
+        if (normalizeForId(rc.text) === normText) return;
+      }
+
+      seenCaptionHashes.add(h);
+      recentCaptions.push({ text });
+      if (recentCaptions.length > CAPTION_DEDUP_WINDOW) recentCaptions.shift();
+
+      const entry = {
+        id: `cap_${h}_${Date.now()}`,
+        type: "caption",
+        timestamp: new Date().toLocaleTimeString(),
+        speaker: "",
+        text: text,
+        capturedAt: new Date().toISOString()
+      };
+
+      try {
+        const key = `captions_${currentMeetingId}`;
+        const result = await chrome.storage.local.get(key);
+        const existing = result[key] || [];
+        existing.push(entry);
+        await chrome.storage.local.set({ [key]: existing, lastUpdated: Date.now() });
+        chrome.runtime.sendMessage({ type: "NEW_CAPTION", entry }).catch((err) => {
+          if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+        });
+      } catch (err) {
+        if (isContextInvalidatedError(err)) { invalidateExtensionContext(err); return; }
+        console.warn("[MeetSync] Caption storage error:", err);
+      }
+    }
   
     // ─── Chat Extraction ──────────────────────────────────────────────────────
+
   
     /**
      * Scans the chat panel and extracts all visible messages.
@@ -652,14 +843,27 @@
   
       // Observed Meet DOM variant (.Ss4fHf blocks)
       if (container.classList && container.classList.contains("Ss4fHf")) {
-        const authorEl = container.querySelector(".poVWob");
-        const timeEl = container.querySelector(".MuzmKe");
-        const authorRaw = authorEl ? (authorEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
-        const timeRaw = timeEl ? (timeEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
+        // Try the primary selector, then additional variants Meet uses
+        const authorEl = container.querySelector(".poVWob, .mNHP2e, [data-sender-name]");
+        const timeEl   = container.querySelector(".MuzmKe, time, [class*='time' i]");
+        let authorRaw  = authorEl ? (authorEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
+        const timeRaw  = timeEl  ? (timeEl.textContent  || "").replace(/\u202F/g, " ").trim() : "";
+
+        // If author is still empty, try to find the name in aria-label of the container
+        if (!authorRaw) {
+          const aria = (container.getAttribute("aria-label") || "").replace(/\u202F/g, " ").trim();
+          if (aria) {
+            const timeIdx = aria.search(/\d{1,2}:\d{2}/);
+            if (timeIdx > 0) authorRaw = aria.slice(0, timeIdx).trim();
+          }
+        }
+
         const author =
-          authorRaw && authorRaw.toLowerCase() === "you"
-            ? (getLocalUserName() || authorRaw)
-            : authorRaw;
+          !authorRaw
+            ? (getLocalUserName() || "Unknown")  // Host's own messages often have no name label
+            : authorRaw.toLowerCase() === "you"
+              ? (getLocalUserName() || authorRaw)
+              : authorRaw;
 
         const parsedTime = parseTime(timeRaw) || parseTime(container.textContent || "");
         const idTime = parsedTime || "";
@@ -959,6 +1163,11 @@
         engPrevParticipants = new Map();
         engNameToParticipantId = new Map();
         detachReactionObserver();
+        detachCaptionObserver();
+        seenCaptionHashes.clear();
+        recentCaptions.length = 0;
+        captionBuffer = "";
+        captionSpeaker = "";
         if (typeof MeetSyncEngagement !== "undefined") {
           MeetSyncEngagement.ensureMeetingMeta(meetId).catch(() => {});
         }
@@ -1015,6 +1224,7 @@
         scanChatMessages();
         scanSystemEvents();
         scanActiveParticipants();
+        tryAttachCaptionObserver();
       }, 500);
     }
 
@@ -1061,13 +1271,16 @@
         sendResponse({
           meetingId: currentMeetingId,
           chatPanelOpen,
-          seenCount: seenIds.size
+          captionsActive: !!captionObserver,
+          seenCount: seenIds.size,
+          captionCount: seenCaptionHashes.size
         });
       }
       if (msg.type === "MANUAL_SCAN") {
         detectChatPanelState();
         scanChatMessages();
         scanSystemEvents();
+        tryAttachCaptionObserver();
         sendResponse({ ok: true });
       }
     });

@@ -357,6 +357,49 @@
       0%, 100% { opacity: 1; }
       50%       { opacity: 0.5; }
     }
+
+    /* ── Caption / Transcription ─────────────────────────────── */
+    .cc-hint {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 7px 12px;
+      background: rgba(62,207,142,0.06);
+      border-bottom: 1px solid rgba(62,207,142,0.18);
+      font-size: 11px; color: var(--text-dim); line-height: 1.45;
+    }
+    .cc-hint.hidden { display: none; }
+    .cc-hint-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+    .cc-hint-text { flex: 1; }
+
+    .caption-entry {
+      padding: 5px 14px; display: flex; gap: 10px;
+      align-items: flex-start;
+      animation: fadeSlideIn 0.2s ease;
+    }
+    .caption-entry:hover { background: rgba(255,255,255,0.02); }
+    .caption-entry + .caption-entry { border-top: 1px solid rgba(46,50,73,0.3); }
+    .caption-speaker-avatar {
+      width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; color: white;
+      flex-shrink: 0; margin-top: 2px;
+    }
+    .caption-body { flex: 1; min-width: 0; }
+    .caption-meta { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+    .caption-speaker-name {
+      font-size: 12px; font-weight: 600; color: var(--green);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;
+    }
+    .caption-time { font-size: 10.5px; color: var(--text-muted); flex-shrink: 0; margin-left: auto; }
+    .caption-text { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; word-break: break-word; }
+
+    .cc-active-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 9.5px; font-weight: 700;
+      color: var(--green);
+      background: rgba(62,207,142,0.15);
+      padding: 1px 6px; border-radius: 4px;
+      letter-spacing: 0.02em;
+    }
   </style>
 </head>
 <body>
@@ -388,9 +431,9 @@
       <span class="stat-label">Messages</span>
     </div>
     <div class="stat-card tasks-card">
-      <span class="stat-icon">⚡</span>
-      <span class="stat-value" id="statTasks">0</span>
-      <span class="stat-label">Actions</span>
+      <span class="stat-icon">🎤</span>
+      <span class="stat-value" id="statCaptions">0</span>
+      <span class="stat-label">Captions</span>
     </div>
     <div class="stat-card attendees-card">
       <span class="stat-icon">👥</span>
@@ -409,8 +452,8 @@
     <button class="tab active" id="tabAll">
       📋 All <span class="tab-count" id="tabAllCount">0</span>
     </button>
-    <button class="tab" id="tabTasks">
-      ⚡ Action Items <span class="tab-count" id="tabTasksCount">0</span>
+    <button class="tab" id="tabTranscription">
+      🎤 Transcription <span class="tab-count" id="tabTranscriptionCount">0</span>
     </button>
     <button class="tab" id="tabAttendees">
       👥 Attendees
@@ -463,12 +506,28 @@
             <th data-sort="name">Name</th>
             <th data-sort="chatCount">Msgs</th>
             <th data-sort="reactionCount">React</th>
-            <th data-sort="attendanceMs">Presence</th>
+            <th data-sort="firstSeen">Joined</th>
+            <th data-sort="attendanceMs">Active Mins</th>
             <th data-sort="isPresent">Status</th>
           </tr>
         </thead>
         <tbody id="engagementTableBody"></tbody>
       </table>
+    </div>
+
+    <!-- Transcription panel -->
+    <div id="transcriptionPanel" style="display:none;padding:6px 0;">
+      <div class="cc-hint" id="ccHint">
+        <span class="cc-hint-icon">ℹ️</span>
+        <span class="cc-hint-text">Enable <strong>Captions (CC)</strong> in Google Meet to see live transcription here.</span>
+        <button class="lim-dismiss" id="dismissCcHint" title="Dismiss">×</button>
+      </div>
+      <div class="empty-state" id="transcriptionEmpty">
+        <div class="empty-icon">🎤</div>
+        <div class="empty-title">No captions yet</div>
+        <div class="empty-sub">Turn on Captions (CC) in Google Meet and spoken words will appear here in real-time.</div>
+      </div>
+      <div id="transcriptionFeed"></div>
     </div>
 
     <button class="scroll-btn" id="scrollBtn">↓ New messages</button>

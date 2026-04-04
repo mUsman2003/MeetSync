@@ -27,18 +27,23 @@ const exportCsvBtn      = document.getElementById("exportCsvBtn");
 const clearBtn          = document.getElementById("clearBtn");
 const scrollBtn         = document.getElementById("scrollBtn");
 const tabAll            = document.getElementById("tabAll");
-const tabTasks          = document.getElementById("tabTasks");
+const tabTranscription  = document.getElementById("tabTranscription");
 const tabAttendees      = document.getElementById("tabAttendees");
 const tabEngagement     = document.getElementById("tabEngagement");
 const tabAllCount       = document.getElementById("tabAllCount");
-const tabTasksCount     = document.getElementById("tabTasksCount");
+const tabTranscriptionCount = document.getElementById("tabTranscriptionCount");
 const statMessages      = document.getElementById("statMessages");
-const statTasks         = document.getElementById("statTasks");
+const statCaptions      = document.getElementById("statCaptions");
 const statAttendees     = document.getElementById("statAttendees");
 const statReactions     = document.getElementById("statReactions");
 const engagementPanel   = document.getElementById("engagementPanel");
 const engagementTableBody = document.getElementById("engagementTableBody");
 const engagementTable   = document.getElementById("engagementTable");
+const transcriptionPanel  = document.getElementById("transcriptionPanel");
+const transcriptionFeed   = document.getElementById("transcriptionFeed");
+const transcriptionEmpty  = document.getElementById("transcriptionEmpty");
+const ccHint              = document.getElementById("ccHint");
+const dismissCcHint       = document.getElementById("dismissCcHint");
 
 // ─── State ────────────────────────────────────────────────────────────────
 let activeMeetingId  = null;
@@ -46,15 +51,19 @@ let allEntries       = [];         // All stored entries for current meeting
 let renderedIds      = new Set();  // IDs already rendered in the feed
 let isUserScrolled   = false;
 let port             = null;
-let activeFilter     = "all";      // "all" | "tasks" | "attendees" | "engagement"
+let activeFilter     = "all";      // "all" | "transcription" | "attendees" | "engagement"
 let participants     = new Map();  // name -> { joinedAt, leftAt, isPresent }
 /** @type {Array<Record<string, unknown>>} */
 let engagementRows   = [];
 let engagementTotals   = { reactionCount: 0, chatTelemetryCount: 0 };
 let engagementSortKey = "chatCount";
 let engagementSortDir = -1; // -1 desc, 1 asc
+let engagementMeta    = null; // meta from engagementStore (firstSeen timestamp)
 let sessionStartTime = null;
 let durationTimer    = null;
+let captionEntries   = [];         // All caption entries for current meeting
+let captionRenderedIds = new Set(); // IDs already rendered in transcription feed
+let captionsActive   = false;      // Whether CC is detected on in the Meet tab
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────
 
@@ -117,18 +126,18 @@ function findEngagementRow(name) {
 
 function updateStats() {
   const msgCount  = allEntries.filter(e => e.type === "chat").length;
-  const taskCount = allEntries.filter(e => e.isTask).length;
+  const capCount  = captionEntries.length;
   const attCount  = participants.size;
   const reactTot  = engagementTotals.reactionCount != null
     ? engagementTotals.reactionCount
     : engagementRows.reduce((a, r) => a + (r.reactionCount || 0), 0);
 
   statMessages.textContent  = msgCount;
-  statTasks.textContent     = taskCount;
+  statCaptions.textContent  = capCount;
   statAttendees.textContent = attCount;
   statReactions.textContent = String(reactTot);
   tabAllCount.textContent   = allEntries.length;
-  tabTasksCount.textContent = taskCount;
+  tabTranscriptionCount.textContent = capCount;
 }
 
 // ─── Duration Timer ───────────────────────────────────────────────────────
@@ -227,8 +236,6 @@ function renderEntry(entry) {
   if (renderedIds.has(entry.id)) return;
   renderedIds.add(entry.id);
 
-  if (activeFilter === "tasks" && !entry.isTask) return;
-
   const isEvent  = entry.type === "event";
   const isTask   = !isEvent && !!entry.isTask;
   const div      = document.createElement("div");
@@ -287,11 +294,14 @@ function clearFeed() {
 function applyFilter() {
   // Toggle panels
   const showFeed =
-    activeFilter !== "attendees" && activeFilter !== "engagement";
+    activeFilter !== "attendees" && activeFilter !== "engagement" && activeFilter !== "transcription";
   feedPanel.style.display = showFeed ? "block" : "none";
   attendeesPanel.style.display = activeFilter === "attendees" ? "block" : "none";
   if (engagementPanel) {
     engagementPanel.style.display = activeFilter === "engagement" ? "block" : "none";
+  }
+  if (transcriptionPanel) {
+    transcriptionPanel.style.display = activeFilter === "transcription" ? "block" : "none";
   }
 
   if (activeFilter === "attendees") {
@@ -306,23 +316,22 @@ function applyFilter() {
     return;
   }
 
+  if (activeFilter === "transcription") {
+    scrollBtn.classList.remove("visible");
+    renderTranscription();
+    return;
+  }
+
   // Rebuild feed for current filter
   feed.innerHTML = "";
   renderedIds.clear();
 
-  const toShow = activeFilter === "tasks"
-    ? allEntries.filter(e => e.isTask)
-    : allEntries;
+  const toShow = allEntries;
 
   if (toShow.length === 0) {
     emptyState.style.display = "flex";
-    if (activeFilter === "tasks") {
-      emptyTitle.textContent = "No action items detected";
-      emptySub.textContent   = "Messages with task keywords or @mentions will be flagged here.";
-    } else {
-      emptyTitle.textContent = "No messages yet";
-      emptySub.textContent   = "Open the chat panel in Google Meet and messages will appear here automatically.";
-    }
+    emptyTitle.textContent = "No messages yet";
+    emptySub.textContent   = "Open the chat panel in Google Meet and messages will appear here automatically.";
   } else {
     emptyState.style.display = "none";
     toShow.forEach(entry => {
@@ -358,18 +367,61 @@ function applyFilter() {
 
 function setActiveTab(filter) {
   activeFilter = filter;
-  [tabAll, tabTasks, tabAttendees, tabEngagement].forEach(t => t.classList.remove("active"));
+  [tabAll, tabTranscription, tabAttendees, tabEngagement].forEach(t => t.classList.remove("active"));
   if (filter === "all") tabAll.classList.add("active");
-  else if (filter === "tasks") tabTasks.classList.add("active");
+  else if (filter === "transcription") tabTranscription.classList.add("active");
   else if (filter === "attendees") tabAttendees.classList.add("active");
   else tabEngagement.classList.add("active");
   applyFilter();
 }
 
-tabAll.addEventListener("click",       () => setActiveTab("all"));
-tabTasks.addEventListener("click",     () => setActiveTab("tasks"));
-tabAttendees.addEventListener("click", () => setActiveTab("attendees"));
-tabEngagement.addEventListener("click", () => setActiveTab("engagement"));
+tabAll.addEventListener("click",            () => setActiveTab("all"));
+tabTranscription.addEventListener("click", () => setActiveTab("transcription"));
+tabAttendees.addEventListener("click",     () => setActiveTab("attendees"));
+tabEngagement.addEventListener("click",    () => setActiveTab("engagement"));
+
+// ── Transcription Rendering ─────────────────────────────────────────────
+
+function renderTranscription() {
+  if (!transcriptionFeed) return;
+  transcriptionFeed.innerHTML = "";
+  captionRenderedIds.clear();
+
+  if (captionEntries.length === 0) {
+    transcriptionEmpty.style.display = "flex";
+  } else {
+    transcriptionEmpty.style.display = "none";
+    captionEntries.forEach(entry => {
+      renderCaptionEntry(entry);
+    });
+  }
+  // Scroll to bottom of transcription
+  feedWrapper.scrollTo({ top: feedWrapper.scrollHeight, behavior: "smooth" });
+}
+
+function renderCaptionEntry(entry) {
+  if (captionRenderedIds.has(entry.id)) return;
+  captionRenderedIds.add(entry.id);
+
+  const div = document.createElement("div");
+  div.className = "caption-entry";
+  div.dataset.id = entry.id;
+
+  const color = getAvatarColor(entry.speaker);
+  const initials = getInitials(entry.speaker);
+
+  div.innerHTML = `
+    <div class="caption-speaker-avatar" style="background:${color}">${escapeHtml(initials)}</div>
+    <div class="caption-body">
+      <div class="caption-meta">
+        <span class="caption-speaker-name">${escapeHtml(entry.speaker)}</span>
+        <span class="caption-time">${escapeHtml(entry.timestamp)}</span>
+      </div>
+      <div class="caption-text">${escapeHtml(entry.text)}</div>
+    </div>`;
+
+  transcriptionFeed.appendChild(div);
+}
 
 function renderEngagement() {
   if (!engagementTableBody) return;
@@ -397,20 +449,34 @@ function renderEngagement() {
 
   if (rows.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">No engagement data yet. Open the People panel or chat in Meet.</td>`;
+    tr.innerHTML = `<td colspan="6" style="text-align:center;padding:16px;color:var(--text-muted)">No engagement data yet. Open the People panel or chat in Meet.</td>`;
     engagementTableBody.appendChild(tr);
     return;
   }
 
   rows.forEach((r) => {
     const tr = document.createElement("tr");
-    const pres = formatDuration(r.attendanceMs || 0);
-    const st = r.isPresent ? "Present" : "Left";
+    // Compute join time from meta.firstSeen + row.firstSeen offset
+    let joinedStr = "—";
+    if (engagementMeta && engagementMeta.firstSeen != null && r.firstSeen != null) {
+      const joinedAt = new Date(engagementMeta.firstSeen + r.firstSeen);
+      joinedStr = joinedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    // Active minutes (round to 1 decimal)
+    let activeMins = "—";
+    if (r.attendanceMs != null && r.attendanceMs > 0) {
+      const m = r.attendanceMs / 60000;
+      activeMins = m >= 1 ? `${Math.round(m)} min` : `${Math.round(r.attendanceMs / 1000)} sec`;
+    } else if (r.isPresent) {
+      activeMins = "active";
+    }
+    const st = r.isPresent ? "✅ Present" : "Left";
     tr.innerHTML = `
       <td class="eng-name">${escapeHtml(r.name || "")}</td>
       <td>${r.chatCount != null ? r.chatCount : 0}</td>
       <td>${r.reactionCount != null ? r.reactionCount : 0}</td>
-      <td>${r.attendanceMs != null ? pres : "—"}</td>
+      <td>${joinedStr}</td>
+      <td>${activeMins}</td>
       <td>${st}</td>`;
     engagementTableBody.appendChild(tr);
   });
@@ -439,7 +505,8 @@ async function loadEngagementData() {
   }
   try {
     const s = await MeetSyncEngagement.loadEngagementSummary(activeMeetingId);
-    engagementRows = s.participants || [];
+    engagementRows   = s.participants || [];
+    engagementMeta   = s.meta || null;
     engagementTotals = s.totals || engagementTotals;
   } catch (_) {
     /* ignore */
@@ -500,6 +567,12 @@ async function loadCurrentSession() {
   const result = await chrome.storage.local.get(key);
   allEntries   = result[key] || [];
 
+  // Load captions
+  const capKey = `captions_${meetingId}`;
+  const capResult = await chrome.storage.local.get(capKey);
+  captionEntries = capResult[capKey] || [];
+  captionRenderedIds.clear();
+
   buildParticipantsFromEntries(allEntries);
   await loadEngagementData();
   clearFeed();
@@ -535,12 +608,35 @@ function connectBackground() {
       case "SESSION_STARTED":
         updateMeetingDisplay(msg.meetingId);
         allEntries = [];
+        captionEntries = [];
+        captionRenderedIds.clear();
         participants.clear();
         engagementRows = [];
         engagementTotals = { reactionCount: 0, chatTelemetryCount: 0 };
         clearFeed();
         if (msg.startTime) { sessionStartTime = msg.startTime; startDurationTimer(); }
         void loadEngagementData();
+        break;
+
+      case "NEW_CAPTION":
+        if (!msg.entry || !msg.entry.id) break;
+        captionEntries.push(msg.entry);
+        if (activeFilter === "transcription") {
+          const wasBottom = isAtBottom();
+          renderCaptionEntry(msg.entry);
+          transcriptionEmpty.style.display = "none";
+          if (wasBottom || !isUserScrolled) {
+            feedWrapper.scrollTo({ top: feedWrapper.scrollHeight, behavior: "smooth" });
+          }
+        }
+        updateStats();
+        break;
+
+      case "CAPTION_STATE":
+        captionsActive = !!msg.enabled;
+        if (captionsActive && ccHint) {
+          ccHint.classList.add("hidden");
+        }
         break;
     }
   });
@@ -573,6 +669,12 @@ dismissLimitations.addEventListener("click", () => {
   sessionStorage.setItem("limDismissed", "1");
 });
 
+if (dismissCcHint) {
+  dismissCcHint.addEventListener("click", () => {
+    if (ccHint) ccHint.classList.add("hidden");
+  });
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────
 
 function buildSummary() {
@@ -601,11 +703,16 @@ function buildSummary() {
     actionItems: allEntries.filter(e => e.isTask).map(e => ({
       sender: cleanDisplayName(e.sender), message: e.message, timestamp: e.timestamp
     })),
+    captionCount: captionEntries.length,
+    captions: captionEntries.map(c => ({
+      speaker: cleanDisplayName(c.speaker), text: c.text, timestamp: c.timestamp
+    })),
     knownLimitations: [
       "Only chat messages are captured — verbal decisions not shared in chat are not logged.",
       "Task detection is heuristic/keyword-based, not LLM-based; subtle tasks may be missed.",
       "Join/leave events rely on Google Meet's notification system being active.",
-      "Chat panel must remain open during the meeting for full capture."
+      "Chat panel must remain open during the meeting for full capture.",
+      "Captions require CC to be enabled in Google Meet; caption text depends on DOM structure."
     ]
   };
 }
@@ -631,7 +738,7 @@ async function exportJSON() {
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   downloadBlob(
-    JSON.stringify({ ...summary, engagementV2, entries: allEntries }, null, 2),
+    JSON.stringify({ ...summary, engagementV2, entries: allEntries, captionEntries }, null, 2),
     `meetsync_${activeMeetingId}_${timestamp}.json`,
     "application/json"
   );
@@ -676,14 +783,17 @@ async function exportCSV() {
 async function clearSession() {
   if (!activeMeetingId) return;
   if (!confirm(`Clear all data for meeting ${activeMeetingId}?`)) return;
-  await chrome.storage.local.remove(`meet_${activeMeetingId}`);
+  await chrome.storage.local.remove([`meet_${activeMeetingId}`, `captions_${activeMeetingId}`]);
   if (typeof MeetSyncEngagement !== "undefined") {
     await MeetSyncEngagement.clearEngagementForMeeting(activeMeetingId);
   }
   allEntries = []; participants.clear();
+  captionEntries = []; captionRenderedIds.clear();
   engagementRows = [];
   engagementTotals = { reactionCount: 0, chatTelemetryCount: 0 };
   clearFeed(); updateStats();
+  if (transcriptionFeed) transcriptionFeed.innerHTML = "";
+  if (transcriptionEmpty) transcriptionEmpty.style.display = "flex";
   setStatus("active", "Session cleared.");
 }
 

@@ -52,6 +52,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case "NEW_ENTRY":
     case "CHAT_PANEL_STATE":
     case "SESSION_STARTED":
+    case "NEW_CAPTION":
+    case "CAPTION_STATE":
       // Forward to any open popup connections
       forwardToPopup(message);
       break;
