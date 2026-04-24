@@ -10,18 +10,8 @@
   // ─── Force Meet to render in background ───────────────────────────────────
   // Google Meet pauses DOM updates for captions and chat when the tab is hidden.
   // Inject a script into the MAIN DOM world to spoof visibilityState.
-  function forceForeground() {
-    const script = document.createElement("script");
-    script.textContent = `
-        Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
-        Object.defineProperty(document, 'hidden', { get: () => false });
-        window.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);
-        document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);
-      `;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
-  }
-  forceForeground();
+  // forceForeground removed: Google Meet's strict CSP prevents inline script injection 
+  // and will fatally terminate the extension script even if wrapped in a try/catch.
 
   // ─── State ────────────────────────────────────────────────────────────────
   const seenIds = new Set();       // Deduplication set
@@ -89,7 +79,10 @@
   function invalidateExtensionContext(err) {
     if (!extensionContextValid) return;
     extensionContextValid = false;
-    console.warn("[MeetSync] Extension context invalidated. Refresh the Meet tab.", err);
+    
+    // Use console.log without the err object to prevent Chrome from 
+    // flagging this as a critical extension error in the dashboard.
+    console.log("[MeetSync] Extension context invalidated (expected after extension reload). Please refresh the Meet tab.");
 
     try { if (debounceTimer) clearTimeout(debounceTimer); } catch (_) { }
     debounceTimer = null;
@@ -106,12 +99,24 @@
     urlWatcher = null;
   }
 
+  function safeSendMessage(msg) {
+    if (!extensionContextValid || !isExtensionApiAvailable()) return;
+    try {
+      chrome.runtime.sendMessage(msg).catch((err) => {
+        if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+      });
+    } catch (err) {
+      if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+    }
+  }
+
   /**
    * Generates a stable unique ID for a message entry.
    */
   function normalizeForId(value) {
     return (value || "")
       .replace(/\u202F/g, " ")
+      .replace(/[^\p{L}\p{N}\s]/gu, "") // Strip all punctuation, keeping letters and numbers across all languages
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase();
@@ -128,9 +133,18 @@
   }
 
   function makeChatId({ sender, time, text, msgIdx }) {
-    // Normalize local user to a stable constant for ID generation
+    // Normalize local user to a stable constant for ID generation.
+    // "Unknown" is treated as local because Meet sometimes fails to resolve
+    // the host's name, causing the same message to be saved twice.
     const senderN = normalizeForId(sender);
-    const isLocal = (senderN === "you" || (localUserName && senderN === normalizeForId(localUserName)));
+    const isLocal = (
+      senderN === "you" ||
+      senderN === "unknown" ||
+      senderN === "__me__" ||
+      senderN === "host(you)" ||
+      senderN === "host (you)" ||
+      (localUserName && senderN === normalizeForId(localUserName))
+    );
     const senderKey = isLocal ? "__ME__" : senderN;
 
     const textN = normalizeForId(text);
@@ -146,7 +160,10 @@
   function makeEventId({ time, text }) {
     const timeN = normalizeForId(time);
     const textN = normalizeForId(text);
-    return `event_${hashString(`${timeN}|${textN}`)}`;
+    // Include a minute-level bucket so the same name can be recorded
+    // joining/leaving across different minutes without being deduped.
+    const minuteBucket = Math.floor(Date.now() / 60000);
+    return `event_${hashString(`${minuteBucket}|${timeN}|${textN}`)}`;
   }
 
   /**
@@ -189,6 +206,53 @@
     return noiseOnly.test(squashed);
   }
 
+  /**
+   * Extract ONLY the actual message text from a chat line element (.ptNLrf),
+   * completely excluding action button overlays (Keep, Pin, Reply, etc.).
+   * Meet renders these as sibling/child elements inside the same container.
+   */
+  function getCleanMessageText(lineEl) {
+    if (!lineEl) return "";
+
+    // Strategy 1: Get the first span with a dir attribute (ltr, rtl, auto) which is usually the message text
+    const dirSpan = lineEl.querySelector('span[dir="ltr"], span[dir="rtl"], span[dir="auto"]');
+    if (dirSpan) {
+      return (dirSpan.textContent || "").replace(/\u202F/g, " ").trim();
+    }
+
+    // Strategy 2: Get the first <span> child that contains text (skip button spans)
+    const spans = lineEl.querySelectorAll("span");
+    for (const span of spans) {
+      // Skip spans inside button/action containers. Use [data-tooltip] as a reliable indicator
+      // for Meet's action buttons, regardless of localization language.
+      if (span.closest('button, [role="button"], [data-tooltip], [aria-label*="pin" i], [aria-label*="keep" i], [aria-label*="reply" i]')) continue;
+      const t = (span.textContent || "").replace(/\u202F/g, " ").trim();
+      if (t && t.length > 0) return t;
+    }
+
+    // Strategy 3: Walk child nodes, skipping action button containers
+    let text = "";
+    for (const child of lineEl.childNodes) {
+      if (child.nodeType === 3) { // TEXT_NODE
+        text += child.textContent;
+      } else if (child.nodeType === 1) {
+        // Skip known action button containers
+        const tag = child.tagName?.toLowerCase();
+        if (tag === "button" || child.getAttribute("role") === "button" || child.hasAttribute("data-tooltip")) continue;
+        const ariaLabel = (child.getAttribute("aria-label") || "").toLowerCase();
+        if (ariaLabel && (ariaLabel.includes("pin") || ariaLabel.includes("keep") || ariaLabel.includes("reply"))) continue;
+        
+        // Only get text from first meaningful child
+        if (!text) text = (child.textContent || "");
+      }
+    }
+    text = text.replace(/\u202F/g, " ").trim();
+    if (text) return text;
+
+    // Final fallback: innerText
+    return (lineEl.innerText || lineEl.textContent || "").replace(/\u202F/g, " ").trim();
+  }
+
   function cleanMessageText(text, senderName) {
     const raw = (text || "").replace(/\u202F/g, " ").trim();
     if (!raw) return "";
@@ -205,7 +269,8 @@
     let cleaned = parts.join(" ").replace(/\s+/g, " ").trim();
 
     // Strip UI action junk that sometimes gets appended to the end of text
-    // like: "usman keepPin message"
+    // Meet concatenates button labels directly onto message text, e.g.:
+    //   "hi" → "hikeepPin message" or "hello keepPin message"
     const tailNoise = [
       "keep",
       "pin message",
@@ -218,19 +283,22 @@
       "edit",
       "react",
       "remove reaction",
-      "keepPin message"
+      "keepPin message",
+      "Pin message"
     ];
-    const tailRe = new RegExp(`(?:\\s*(?:${tailNoise.map(t => t.replace(/ /g, "\\\\s+")).join("|")}))+\\s*$`, "i");
+    const tailRe = new RegExp(`(?:\\s*(?:${tailNoise.map(t => t.replace(/ /g, "\\s+")).join("|")}))+\\s*$`, "i");
     cleaned = cleaned.replace(tailRe, "").trim();
 
-    // Also handle concatenated suffixes like "keepPin message"
-    const squashed = cleaned.replace(/\s+/g, "");
-    const squashedTailRe = new RegExp(`(?:keep|pinmessage|unpinmessage|moreoptions|reply|copylink|report|delete|edit|react|removereaction|keepPin message)+$`, "i");
-    if (squashedTailRe.test(squashed)) {
-      // If the entire string is just noise, drop it; otherwise keep original cleaned (best effort)
-      const onlyNoise = new RegExp(`^(?:keep|pinmessage|unpinmessage|moreoptions|reply|copylink|report|delete|edit|react|removereaction|keepPin message)+$`, "i");
-      if (onlyNoise.test(squashed)) return "";
-    }
+    // Aggressive final pass: strip concatenated noise that has NO space separator.
+    // E.g. "hikeepPin message" → "hi", "stillkeepPin message" → "still"
+    cleaned = cleaned.replace(/(?:keepPin\s*message|keep\s*Pin\s*message|Pin\s*message|Unpin\s*message|More\s*options|Remove\s*reaction|Copy\s*link)\s*$/i, "").trim();
+    // Handle backslash-prefixed: "ahmed\keepPin message"
+    cleaned = cleaned.replace(/\\?(?:keepPin\s*message|Pin\s*message)\s*$/i, "").trim();
+    // Also handle the fully squashed "keepPinmessage" variant
+    cleaned = cleaned.replace(/(?:keepPinmessage|keepPin|Pinmessage)\s*$/i, "").trim();
+
+    // If after stripping everything is empty, drop it
+    if (!cleaned || cleaned.length < 1) return "";
 
     return cleaned;
   }
@@ -270,36 +338,55 @@
   function getLocalUserName() {
     if (localUserName) return localUserName;
 
-    // The most robust 2026 selector: data-self-name attribute
+    // Selector 1: data-self-name attribute (most reliable 2026)
     const selfNameEl = document.querySelector("[data-self-name]");
     if (selfNameEl) {
       const t = (selfNameEl.getAttribute("data-self-name") || "").trim();
-      if (t) {
-        localUserName = t;
-        return localUserName;
-      }
+      if (t) { localUserName = t; persistLocalUserName(t); return t; }
     }
 
-    // Fallback: aria-label of the account button
+    // Selector 2: Google Account aria-label button
     const accountEl = document.querySelector('[aria-label^="Google Account:" i], button[aria-label^="Google Account:" i]');
     const label = accountEl ? (accountEl.getAttribute("aria-label") || "") : "";
     const m = label.match(/Google Account:\s*([^,(]+?)(?:\s*[,(]|$)/i);
     if (m && m[1]) {
       localUserName = m[1].trim();
+      persistLocalUserName(localUserName);
       return localUserName;
     }
 
-    // Fallback 2: Name in header
+    // Selector 3: Name in header element
     const headerName = document.querySelector(".dwSJ2e, .R6S7W");
     if (headerName && headerName.textContent) {
       const t = headerName.textContent.trim();
       if (t && t.toLowerCase() !== "you") {
         localUserName = t;
-        return localUserName;
+        persistLocalUserName(t);
+        return t;
+      }
+    }
+
+    // Selector 4: Participant tile that has "(You)" or "(Meeting host)" label
+    const tiles = document.querySelectorAll("[data-participant-id]");
+    for (const tile of tiles) {
+      const label = tile.textContent || "";
+      if (/(\(You\)|\(Meeting host\))/i.test(label)) {
+        // Extract name before the parenthetical
+        const namePart = label.split(/\s*\(/)[0].replace(/\u202F/g, " ").trim();
+        if (namePart && namePart.length >= 2 && namePart.toLowerCase() !== "you") {
+          localUserName = namePart;
+          persistLocalUserName(namePart);
+          return namePart;
+        }
       }
     }
 
     return null;
+  }
+
+  function persistLocalUserName(name) {
+    if (!name || !extensionContextValid) return;
+    try { chrome.storage.local.set({ localUserName: name }).catch(() => {}); } catch(err) {}
   }
 
   function trySenderFromAria(container) {
@@ -391,9 +478,7 @@
       });
 
       // Notify popup if open
-      chrome.runtime.sendMessage({ type: "NEW_ENTRY", entry }).catch((err) => {
-        if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
-      });
+      safeSendMessage({ type: "NEW_ENTRY", entry });
 
       if (entry.type === "chat" && typeof MeetSyncEngagement !== "undefined") {
         recordChatEngagement(entry).catch(() => { });
@@ -611,15 +696,44 @@
     engReactionsObserver.observe(reactionsNode, { childList: true });
   }
 
+  // ─── Body-level reaction fallback observer ────────────────────────────────
+  // Watches the whole body for html-blob elements (unique to Meet emoji
+  // reactions). Works regardless of Meet DOM restructuring, complementing
+  // the fragile grid-path approach above.
+  let bodyReactionObserver = null;
+  function ensureBodyReactionObserver() {
+    if (bodyReactionObserver) return;
+    bodyReactionObserver = new MutationObserver((mutations) => {
+      if (!extensionContextValid || !currentMeetingId || typeof MeetSyncEngagement === "undefined") return;
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (!node || !node.querySelector) continue;
+          const blob = (node.tagName || "").toLowerCase() === "html-blob"
+            ? node
+            : node.querySelector && node.querySelector("html-blob");
+          if (!blob) continue;
+          const nameRaw = blob.nextElementSibling ? blob.nextElementSibling.textContent : "";
+          const name = (nameRaw || "").trim().split(/\s+/)
+            .map(x => x ? x[0].toUpperCase() + x.slice(1) : "").join(" ");
+          const emoji = blob.querySelector("img") ? blob.querySelector("img").getAttribute("alt") : "";
+          if (!name || !emoji) continue;
+          void (async () => {
+            const meta = await MeetSyncEngagement.ensureMeetingMeta(currentMeetingId);
+            if (!meta) return;
+            const nk = MeetSyncEngagement.normalizeNameKey(name);
+            const meetPid = nk ? engNameToParticipantId.get(nk) : null;
+            const enc = MeetSyncEngagement.encodeEvent("emoji", Date.now(), meta.firstSeen, emoji || "?");
+            await MeetSyncEngagement.recordParticipantEvents(currentMeetingId, name, "", [enc], meetPid);
+          })();
+        }
+      }
+    });
+    bodyReactionObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
   // ─── Caption / Live Transcription Extraction ─────────────────────────────
 
   let lastCapturedText = "";
-
-  function isNoise(text) {
-    if (!text || text.length < 2) return true;
-    if (/arrow_downward|jump to bottom/i.test(text)) return true;
-    return false;
-  }
 
   /**
    * Start observing for captions.
@@ -641,10 +755,6 @@
         if (mutation.addedNodes.length) {
           mutation.addedNodes.forEach((node) => {
             if (node.nodeType === 1 && node.classList) {
-              // Meet uses specific wrappers for captions.
-              // The user provided structure shows the text is inside `div.ygicle`.
-              // We use a broad check for known caption classes or `dir="ltr"`.
-
               // Directly check if this is the text container itself:
               if (node.classList.contains('CNusmb') ||
                 node.classList.contains('ygicle') ||
@@ -671,10 +781,26 @@
             }
           });
         }
+        
+        // Handle caption block removals to prevent dropping transcripts that disappear quickly
+        if (mutation.removedNodes.length) {
+          mutation.removedNodes.forEach((node) => {
+            if (node.nodeType === 1 && node.classList && (node.classList.contains('nMcdL') || node.classList.contains('CNusmb') || node.classList.contains('iOzk7') || node.hasAttribute('jsname'))) {
+              if (captionBuffer && captionBuffer !== lastCapturedText) {
+                // The caption block was removed before the debounce timer fired. Force save now!
+                saveCaptionEntry(captionBuffer, captionSpeaker);
+                lastCapturedText = captionBuffer;
+                captionBuffer = "";
+                if (captionFlushTimer) clearTimeout(captionFlushTimer);
+              }
+            }
+          });
+        }
+
         // Also listen for direct text modifications (characterData)
-        else if (mutation.type === "characterData" && mutation.target) {
+        if (mutation.type === "characterData" && mutation.target) {
           const parent = mutation.target.parentElement;
-          if (parent && (parent.classList.contains('CNusmb') || parent.classList.contains('ygicle') || parent.getAttribute('dir') === 'ltr')) {
+          if (parent && (parent.classList?.contains('CNusmb') || parent.classList?.contains('ygicle') || parent.getAttribute('dir') === 'ltr')) {
             const newText = (parent.innerText || parent.textContent || "").replace(/\u202F/g, " ").trim();
             if (newText && !isNoise(newText)) {
               latestTextChunk = newText;
@@ -686,23 +812,117 @@
 
       // If we extracted a valid text chunk, buffer it and debounce the save.
       if (latestTextChunk && latestTextChunk !== lastCapturedText) {
+        
+        // FORCE FLUSH: If the new text is completely different from the current buffer, 
+        // it means Meet started a new caption block (speaker continued, but UI refreshed).
+        // If we don't save now, the previous text is overwritten and lost forever.
+        const normLatest = normalizeForId(latestTextChunk);
+        const normBuffer = normalizeForId(captionBuffer);
+        
+        if (normBuffer && !normLatest.includes(normBuffer) && !normBuffer.includes(normLatest)) {
+          // Force save the old buffer immediately before overwriting it
+          if (captionFlushTimer) clearTimeout(captionFlushTimer);
+          captionFlushTimer = null;
+          const prevBuffer = captionBuffer;
+          captionBuffer = ""; // CRITICAL: reset BEFORE async save so the debounce timer never re-saves it
+          lastCapturedText = prevBuffer;
+          saveCaptionEntry(prevBuffer, captionSpeaker);
+        }
+
         captionBuffer = latestTextChunk;
+
+        // Extract speaker name from the caption block using multiple strategies.
+        // Meet's caption DOM varies between versions; we try several approaches.
+        let detectedSpeaker = "";
+        try {
+          // Strategy 1: Find caption blocks and match the one with our text
+          const captionBlocks = document.querySelectorAll('.nMcdL, [jsname="tgaKEf"], .iOzk7, [class*="caption" i]');
+          captionBlocks.forEach(block => {
+            if (detectedSpeaker) return; // already found
+            const textEl = block.querySelector('.CNusmb, .ygicle, [dir="ltr"], span[dir="ltr"]');
+            if (textEl) {
+              const blockText = (textEl.innerText || textEl.textContent || "").replace(/\u202F/g, " ").trim();
+              if (blockText === latestTextChunk || blockText.includes(latestTextChunk) || latestTextChunk.includes(blockText)) {
+                
+                // Look within block, and its immediate parents up to 3 levels
+                let currentScope = block;
+                for (let i = 0; i < 3 && currentScope && !detectedSpeaker; i++) {
+                  // Try known speaker label selectors
+                  const speakerEl = currentScope.querySelector('.zs7s8d, .KcIKyf, .YTbUzc, .jxFHg, .poVWob, .mNHP2e, [data-sender-name], [class*="speaker" i], [class*="name" i]:not([class*="js"])');
+                  if (speakerEl && speakerEl !== textEl) {
+                    detectedSpeaker = (speakerEl.innerText || speakerEl.textContent || "").replace(/\u202F/g, " ").trim();
+                  }
+                  
+                  // Fallback: Check for an image avatar which usually has the alt text as the user's name
+                  if (!detectedSpeaker) {
+                    const imgEl = currentScope.querySelector('img[src*="googleusercontent"], img');
+                    if (imgEl && imgEl.alt) {
+                      detectedSpeaker = imgEl.alt.trim();
+                    }
+                  }
+                  currentScope = currentScope.parentElement;
+                }
+              }
+            }
+          });
+
+          // Strategy 2: Use the caption container's full text to extract speaker
+          // Caption blocks often render as: "Speaker Name\ncaption text"
+          if (!detectedSpeaker) {
+            captionBlocks.forEach(block => {
+              if (detectedSpeaker) return;
+              const fullText = (block.innerText || "").replace(/\u202F/g, " ").trim();
+              if (fullText.includes(latestTextChunk)) {
+                const lines = fullText.split("\n").map(l => l.trim()).filter(Boolean);
+                if (lines.length >= 2 && lines[lines.length - 1].includes(latestTextChunk)) {
+                  // First line is the speaker name
+                  const candidateName = lines[0];
+                  if (candidateName.length > 1 && candidateName.length < 50 && !/^\d/.test(candidateName)) {
+                    detectedSpeaker = candidateName;
+                  }
+                }
+              }
+            });
+          }
+
+          // Strategy 3: aria-label on parent elements
+          if (!detectedSpeaker) {
+            const allCaptionTexts = document.querySelectorAll('.CNusmb, .ygicle, [dir="ltr"]');
+            allCaptionTexts.forEach(el => {
+              if (detectedSpeaker) return;
+              const t = (el.innerText || el.textContent || "").replace(/\u202F/g, " ").trim();
+              if (t === latestTextChunk) {
+                let parent = el.parentElement;
+                for (let i = 0; i < 5 && parent; i++) {
+                  const aria = parent.getAttribute("aria-label") || "";
+                  if (aria && aria.length > t.length) {
+                    const name = aria.replace(t, "").replace(/[,.:]/g, "").trim();
+                    if (name.length > 1 && name.length < 50) {
+                      detectedSpeaker = name;
+                      break;
+                    }
+                  }
+                  parent = parent.parentElement;
+                }
+              }
+            });
+          }
+        } catch (_) { }
+        captionSpeaker = detectedSpeaker || captionSpeaker;
 
         if (captionFlushTimer) clearTimeout(captionFlushTimer);
         captionFlushTimer = setTimeout(() => {
           if (captionBuffer && captionBuffer !== lastCapturedText) {
             lastCapturedText = captionBuffer;
-            saveCaptionEntry(captionBuffer);
+            saveCaptionEntry(captionBuffer, captionSpeaker);
           }
           captionBuffer = "";
-        }, 1500); // Wait 1.5s after the last word is spoken before saving the line
+        }, 4000); // Wait 4.0s after the last word is spoken before saving the line
       }
 
       // Notify popup that captions are active if we found one
       if (foundCaption && extensionContextValid) {
-        chrome.runtime.sendMessage({ type: "CAPTION_STATE", enabled: true }).catch((err) => {
-          if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
-        });
+        safeSendMessage({ type: "CAPTION_STATE", enabled: true });
       }
     });
 
@@ -730,9 +950,9 @@
 
   /**
    * Saves a finalized caption entry to storage and notifies the popup.
-   * Only saves the TEXT — no speaker name as per user request.
+   * Includes the speaker name when available.
    */
-  async function saveCaptionEntry(text) {
+  async function saveCaptionEntry(text, speaker) {
     if (!extensionContextValid || !isExtensionApiAvailable() || !currentMeetingId) return;
     if (!text || text.length < 2) return;
 
@@ -750,11 +970,17 @@
     recentCaptions.push({ text });
     if (recentCaptions.length > CAPTION_DEDUP_WINDOW) recentCaptions.shift();
 
+    // Resolve speaker identity
+    let resolvedSpeaker = (speaker || "").trim();
+    if (!resolvedSpeaker || resolvedSpeaker.toLowerCase() === "you") {
+      resolvedSpeaker = getLocalUserName() || "Host (You)";
+    }
+
     const entry = {
       id: `cap_${h}_${Date.now()}`,
       type: "caption",
       timestamp: new Date().toLocaleTimeString(),
-      speaker: "",
+      speaker: resolvedSpeaker,
       text: text,
       capturedAt: new Date().toISOString()
     };
@@ -765,9 +991,7 @@
       const existing = result[key] || [];
       existing.push(entry);
       await chrome.storage.local.set({ [key]: existing, lastUpdated: Date.now() });
-      chrome.runtime.sendMessage({ type: "NEW_CAPTION", entry }).catch((err) => {
-        if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
-      });
+      safeSendMessage({ type: "NEW_CAPTION", entry });
     } catch (err) {
       if (isContextInvalidatedError(err)) { invalidateExtensionContext(err); return; }
       console.warn("[MeetSync] Caption storage error:", err);
@@ -782,247 +1006,90 @@
    * Handles grouped messages (multiple messages under one sender).
    */
   function scanChatMessages() {
-    // Observed Meet DOM variant: each message group container is .Ss4fHf
-    const ssContainers = document.querySelectorAll(".Ss4fHf");
-    if (ssContainers.length > 0) {
-      ssContainers.forEach((container, idx) => extractFromMessageContainer(container, idx));
-      return;
-    }
-
-    // Prefer scanning within the chat panel/list to avoid matching unrelated listitems.
     const chatPanel = document.querySelector(
-      '[aria-label*="chat" i][role="complementary"], [data-panel-type="chat"], [aria-label*="chat" i]'
-    );
-
-    let messageContainers = [];
-    if (chatPanel) {
-      const chatList =
-        chatPanel.querySelector('[aria-label*="chat messages" i], [role="log"], [role="list"]') ||
-        chatPanel;
-      messageContainers = Array.from(
-        chatList.querySelectorAll('[data-message-id], [role="listitem"], [data-sender-id]')
-      );
-    } else {
-      // Fallback: global selectors (less reliable)
-      messageContainers = Array.from(
-        document.querySelectorAll('[data-message-id], [jsname="xySENc"] [data-sender-id], [role="listitem"]')
-      );
-    }
-
-    if (messageContainers.length === 0) {
-      // Fallback: try to find the chat panel by its ARIA role
-      scanChatFallback();
-      return;
-    }
-
-    messageContainers.forEach((container, idx) => {
-      extractFromMessageContainer(container, idx);
-    });
-  }
-
-  /**
-   * Fallback scanner that walks the chat panel's text nodes more broadly.
-   */
-  function scanChatFallback() {
-    // Look for the chat side panel
-    const chatPanel = document.querySelector(
-      '[aria-label*="chat" i], [aria-label*="message" i], [data-panel-type="chat"]'
+      '[aria-label*="chat" i][role="complementary"], [data-panel-type="chat"]'
     );
     if (!chatPanel) return;
 
-    // Find message blocks — each block typically has a sender and one or more messages
+    const chatList = chatPanel.querySelector('[aria-label*="chat messages" i], [role="log"], [role="list"]') || chatPanel;
+
+    // Every single message bubble in Google Meet has a [data-message-id] attribute.
+    const msgBubbles = Array.from(chatList.querySelectorAll('[data-message-id]'));
+
+    if (msgBubbles.length > 0) {
+      msgBubbles.forEach((bubble) => {
+        extractFromBubble(bubble);
+      });
+      return;
+    }
+
+    // Absolute fallback if Google removes data-message-id
     const msgBlocks = chatPanel.querySelectorAll('[role="listitem"], [data-is-bot-message]');
-    msgBlocks.forEach((block, idx) => extractFromMessageContainer(block, idx));
+    msgBlocks.forEach((block, idx) => extractFromBubble(block, idx));
   }
 
-  /**
-   * Extracts message data from a single container element.
-   */
-  function extractFromMessageContainer(container, containerIdx) {
-    // Attempt to read sender from data attribute first, then from DOM
-    const senderId = container.getAttribute("data-sender-id") || "";
-    const messageId = container.getAttribute("data-message-id") || "";
-
-    // Observed Meet DOM variant (.Ss4fHf blocks)
-    if (container.classList && container.classList.contains("Ss4fHf")) {
-      // Try the primary selector, then additional variants Meet uses
-      const authorEl = container.querySelector(".poVWob, .mNHP2e, [data-sender-name]");
-      const timeEl = container.querySelector(".MuzmKe, time, [class*='time' i]");
-      let authorRaw = authorEl ? (authorEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
-      const timeRaw = timeEl ? (timeEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
-
-      // If author is still empty, try to find the name in aria-label of the container
+  function extractFromBubble(bubble, fallbackIdx = 0) {
+    const messageId = bubble.getAttribute("data-message-id");
+    
+    // 1. Find Author
+    let authorRaw = "";
+    // If it's another person's message, it will be grouped inside a .Ss4fHf container with a sender name
+    const parentGroup = bubble.closest('.Ss4fHf');
+    if (parentGroup) {
+      const authorEl = parentGroup.querySelector(".poVWob, .mNHP2e, [data-sender-name]");
+      authorRaw = authorEl ? (authorEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
+      
       if (!authorRaw) {
-        const aria = (container.getAttribute("aria-label") || "").replace(/\u202F/g, " ").trim();
+        const aria = (parentGroup.getAttribute("aria-label") || "").replace(/\u202F/g, " ").trim();
         if (aria) {
           const timeIdx = aria.search(/\d{1,2}:\d{2}/);
           if (timeIdx > 0) authorRaw = aria.slice(0, timeIdx).trim();
         }
       }
-
-      const author =
-        !authorRaw
-          ? (getLocalUserName() || "Unknown")  // Host's own messages often have no name label
-          : authorRaw.toLowerCase() === "you"
-            ? (getLocalUserName() || authorRaw)
-            : authorRaw;
-
-      const parsedTime = parseTime(timeRaw) || parseTime(container.textContent || "");
-      const idTime = parsedTime || "";
-      const displayTime = parsedTime || new Date().toLocaleTimeString();
-
-      const lineEls = container.querySelectorAll('.ptNLrf, [jsname="W297wb"]');
-      if (lineEls.length > 0) {
-        Array.from(lineEls).forEach((lineEl, msgIdx) => {
-          const rawText = lineEl.textContent || "";
-          const text = cleanMessageText(rawText, author);
-          if (!text) return;
-
-          const uniqueKey = messageId
-            ? `${messageId}-${msgIdx}`
-            : makeChatId({ sender: author, time: idTime, text, msgIdx });
-
-          saveEntry({
-            id: uniqueKey,
-            type: "chat",
-            timestamp: displayTime,
-            sender: author || "Unknown",
-            message: text,
-            isTask: detectIsTask(text),
-            capturedAt: new Date().toISOString()
-          });
-        });
-        return;
-      }
-
-      // Fallback: treat entire container as one message
-      const text = cleanMessageText(container.textContent || "", author);
-      if (!text) return;
-
-      const uniqueKey = messageId
-        ? `${messageId}-0`
-        : makeChatId({ sender: author, time: idTime, text, msgIdx: 0 });
-
-      saveEntry({
-        id: uniqueKey,
-        type: "chat",
-        timestamp: displayTime,
-        sender: author || "Unknown",
-        message: text,
-        isTask: detectIsTask(text),
-        capturedAt: new Date().toISOString()
-      });
-      return;
     }
+    
+    // If no author found (self messages lack names and parent groups), use local user identity
+    let author = !authorRaw ? (getLocalUserName() || "__ME__") : authorRaw;
+    if (author.toLowerCase() === "you") author = getLocalUserName() || "__ME__";
 
-    // Find all text message nodes — individual message bubbles within a group
-    // Meet groups multiple messages from the same sender under one header
-    // Prefer stable selectors first.
-    let textNodes = container.querySelectorAll('[data-message-text], [jsname="W297wb"], [jsname="r4nke"]');
-    // Secondary fallback (some Meet builds don't use the attributes above).
-    // Keep it narrower than the old broad selectors by excluding buttons/menus.
-    if (textNodes.length === 0) {
-      textNodes = container.querySelectorAll(
-        'div[jsname="W297wb"] span, span[jsname="W297wb"], div[dir="auto"] span'
-      );
-    }
+    // 2. Find Time
+    let timeRaw = "";
+    const timeEl = parentGroup ? parentGroup.querySelector("time, [class*='time' i]") : null;
+    if (timeEl) timeRaw = (timeEl.textContent || "").replace(/\u202F/g, " ").trim();
+    
+    const parsedTime = parseTime(timeRaw) || parseTime(bubble.textContent || "");
+    const displayTime = parsedTime || new Date().toLocaleTimeString();
+    const idTime = parsedTime || "";
 
-    const messageTextSamples = Array.from(textNodes)
-      .map(n => (n.textContent || "").replace(/\u202F/g, " ").trim())
-      .filter(Boolean);
-    let senderName = pickBestSenderName(container, messageTextSamples) || "";
-    if (!senderName) senderName = trySenderFromAria(container);
-    if (!senderName) senderName = inferSenderFromContainerText(container, messageTextSamples);
-    if (senderName && senderName.toLowerCase() === "you") {
-      senderName = getLocalUserName() || senderName;
-    }
-    if (!senderName) {
-      // If we can't find the sender, prefer local user name for self messages.
-      senderName = getLocalUserName() || "";
-    }
-
-    if (textNodes.length > 0) {
-      textNodes.forEach((node, msgIdx) => {
-        const rawText = node.textContent || "";
-        const text = cleanMessageText(rawText, senderName);
-        if (!text) return;
-
-        // Find timestamp — usually in a sibling or parent time element
-        let timeStr = null;
-        const timeEl = container.querySelector("time, [aria-label*=':'], [class*='time' i]");
-        if (timeEl) {
-          timeStr = parseTime(timeEl.getAttribute("datetime") || timeEl.textContent);
-        }
-        if (!timeStr) {
-          // Scan all text for a time pattern
-          const allText = container.textContent || "";
-          timeStr = parseTime(allText);
-        }
-
-        // Keep a stable time component for dedup IDs.
-        // If Meet doesn't expose a timestamp, we leave it empty for ID stability
-        // (display can still show a fallback time).
-        const idTime = timeStr || "";
-        const displayTime = timeStr || new Date().toLocaleTimeString();
-
-        const uniqueKey = messageId
-          ? `${messageId}-${msgIdx}`
-          : makeChatId({
-            sender: senderName,
-            time: idTime,
-            text,
-            msgIdx
-          });
-
-        const entry = {
-          id: uniqueKey,
-          type: "chat",
-          timestamp: displayTime,
-          sender: senderName || "Unknown",
-          message: text,
-          isTask: detectIsTask(text),
-          capturedAt: new Date().toISOString()
-        };
-
-        saveEntry(entry);
-      });
+    // 3. Extract Text
+    let rawText = "";
+    const textNode = bubble.querySelector('[data-message-text], [jsname="W297wb"], span[dir="ltr"], span[dir="auto"]');
+    if (textNode) {
+      // Prefer clean text extraction avoiding button overlays
+      rawText = (textNode.textContent || "").replace(/\u202F/g, " ").trim();
     } else {
-      // Fallback: extract all meaningful text from the container
-      const allText = (container.textContent || "").replace(/\u202F/g, " ");
-      const lines = allText
-        .split("\n")
-        .map(l => l.trim())
-        .filter(l => l && !isNoise(l) && l.length > 1);
-
-      // Filter out time strings and build message text
-      const parsedTime = parseTime(allText);
-      const idTime = parsedTime || "";
-      const displayTime = parsedTime || new Date().toLocaleTimeString();
-      const msgLines = lines.filter(l => !parseTime(l) && !isNoise(l));
-
-      if (msgLines.length === 0) return;
-
-      const text = cleanMessageText(msgLines.join(" "), senderName);
-      if (!text) return;
-
-      const uniqueKey = makeChatId({
-        sender: senderName,
-        time: idTime,
-        text,
-        msgIdx: 0
-      });
-      const entry = {
-        id: uniqueKey,
-        type: "chat",
-        timestamp: displayTime,
-        sender: senderName || "Unknown",
-        message: text,
-        isTask: detectIsTask(text),
-        capturedAt: new Date().toISOString()
-      };
-
-      saveEntry(entry);
+      rawText = getCleanMessageText(bubble);
+      if (!rawText) rawText = (bubble.textContent || "").replace(/\u202F/g, " ").trim();
     }
+
+    const text = cleanMessageText(rawText, author);
+    if (!text) return;
+
+    // 4. Save Entry
+    // The messageId is 100% unique per bubble provided by Google Meet.
+    const uniqueKey = messageId 
+      ? `${messageId}-0` 
+      : makeChatId({ sender: author, time: idTime, text, msgIdx: fallbackIdx });
+
+    saveEntry({
+      id: uniqueKey,
+      type: "chat",
+      timestamp: displayTime,
+      sender: author,
+      message: text,
+      isTask: detectIsTask(text),
+      capturedAt: new Date().toISOString()
+    });
   }
 
   // ─── System Event Extraction ──────────────────────────────────────────────
@@ -1050,7 +1117,7 @@
   }
 
   function extractSystemEvent(node) {
-    const text = (node.textContent || "").replace(/\u202F/g, " ").trim();
+    const text = (node.textContent || "").replace(/\u202F/g, " ").replace(/\s+/g, " ").trim();
     if (!text) return;
 
     const lower = text.toLowerCase();
@@ -1065,19 +1132,23 @@
     // Avoid huge "state" announcements that can repeat (camera/mic status etc.)
     if (text.length > 120) return;
 
-    // Debounce by message text (Meet often re-renders the same toast repeatedly)
+    const participantName = extractParticipantName(text);
+    const action = isJoin ? "join" : "leave";
+
+    // Dedup by normalized "participant:action" key with a 2-minute window.
+    // Meet keeps re-rendering the same toast, so we only allow ONE event per
+    // participant per action type within each 2-minute window.
+    const dedupKey = `${(participantName || text).toLowerCase().replace(/\s+/g, "")}:${action}`;
     const now = Date.now();
-    const lastSeen = recentSystemTexts.get(text) || 0;
-    if (now - lastSeen < 30000) return; // 30s
-    recentSystemTexts.set(text, now);
+    const lastSeen = recentSystemTexts.get(dedupKey) || 0;
+    if (now - lastSeen < 120000) return; // 2-minute window per participant+action
+    recentSystemTexts.set(dedupKey, now);
 
     const timeStr = new Date().toLocaleTimeString();
-    const uniqueKey = makeEventId({ time: "", text });
+    const uniqueKey = `event_${hashString(`${dedupKey}|${Math.floor(now / 120000)}`)}`;
 
-    // Don't re-log the same event text within 5 seconds
     if (seenIds.has(uniqueKey)) return;
 
-    const participantName = extractParticipantName(text);
     const entry = {
       id: uniqueKey,
       type: "event",
@@ -1103,9 +1174,13 @@
     if (countEl) {
       const count = parseInt(countEl.textContent || "0");
       if (count > 0 && extensionContextValid) {
-        chrome.storage.local.set({ participantCount: count }).catch(err => {
+        try {
+          chrome.storage.local.set({ participantCount: count }).catch(err => {
+            if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+          });
+        } catch(err) {
           if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
-        });
+        }
       }
     }
 
@@ -1134,14 +1209,16 @@
     if (isOpen !== chatPanelOpen) {
       chatPanelOpen = isOpen;
       if (extensionContextValid) {
-        chrome.storage.local.set({ chatPanelOpen: isOpen }).catch(err => {
+        try {
+          chrome.storage.local.set({ chatPanelOpen: isOpen }).catch(err => {
+            if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
+          });
+        } catch(err) {
           if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
-        });
-        chrome.runtime.sendMessage({
+        }
+        safeSendMessage({
           type: "CHAT_PANEL_STATE",
           open: isOpen
-        }).catch(err => {
-          if (isContextInvalidatedError(err)) invalidateExtensionContext(err);
         });
       }
     }
@@ -1160,21 +1237,27 @@
 
     if (meetId !== currentMeetingId) {
       console.log(`[MeetSync] New meeting detected: ${meetId}`);
+
+      // ── Reset all per-meeting state so the previous meeting's data
+      //    is never mixed into the new session.
       currentMeetingId = meetId;
       seenIds.clear();
+      recentSystemTexts.clear();
       engPrevParticipants = new Map();
       engNameToParticipantId = new Map();
+      localUserName = null; // re-detect for the new meeting
       detachReactionObserver();
       detachCaptionObserver();
       seenCaptionHashes.clear();
       recentCaptions.length = 0;
       captionBuffer = "";
       captionSpeaker = "";
+      lastCapturedText = "";
+
       if (typeof MeetSyncEngagement !== "undefined") {
         MeetSyncEngagement.ensureMeetingMeta(meetId).catch(() => { });
       }
 
-      // Store the new session info (do NOT clear old session data)
       sessionStartTime = Date.now();
       if (extensionContextValid) {
         try {
@@ -1184,8 +1267,8 @@
             lastUpdated: Date.now(),
             sessionStartTime
           });
-
-          chrome.runtime.sendMessage({
+          // Notify popup immediately so it resets its view
+          safeSendMessage({
             type: "SESSION_STARTED",
             meetingId: meetId,
             startTime: sessionStartTime
@@ -1195,7 +1278,7 @@
         }
       }
 
-      // Reload existing IDs into the dedup set to prevent re-logging after page refresh
+      // Pre-load existing IDs so we don't re-log after a page refresh
       const key = `meet_${meetId}`;
       if (extensionContextValid) {
         try {
@@ -1279,9 +1362,12 @@
       });
     }
     if (msg.type === "MANUAL_SCAN") {
+      // Full re-scan: picks up all already-rendered chat when popup opens mid-meeting.
+      refreshEngagementNameMap();
       detectChatPanelState();
       scanChatMessages();
       scanSystemEvents();
+      scanActiveParticipants();
       tryAttachCaptionObserver();
       sendResponse({ ok: true });
     }
@@ -1296,12 +1382,39 @@
     }
     await initSession();
     startObserver();
-    // Initial scan after a short delay to let the page settle
+    ensureBodyReactionObserver(); // Start body-level reaction fallback immediately
+
+    // Initial scan: captures messages already on screen when extension opens mid-meeting
     setTimeout(() => {
       if (!extensionContextValid) return;
+      refreshEngagementNameMap();
       detectChatPanelState();
       scanChatMessages();
+      scanSystemEvents();
+      tryAttachCaptionObserver();
     }, 2000);
+
+    // ── Periodic fallback poll (Bug 1 & 5) ────────────────────────────────
+    // Runs every 5 seconds regardless of DOM mutations.
+    // Ensures recording continues when the tab is in the background and
+    // Meet may suppress mutation events, and catches messages missed on
+    // mid-meeting extension open.
+    setInterval(() => {
+      if (!extensionContextValid || !currentMeetingId) return;
+      refreshEngagementNameMap();
+      detectChatPanelState();
+      scanChatMessages();
+      tryAttachCaptionObserver();
+    }, 5000);
+
+    // ── Participant & reaction periodic sync ───────────────────────────────
+    // Re-syncs attendance DOM diff and re-attaches reaction observer
+    // in case Meet changes its DOM structure.
+    setInterval(() => {
+      if (!extensionContextValid || !currentMeetingId) return;
+      scanActiveParticipants();
+      tryAttachReactionObserver();
+    }, 10000);
   }
 
   // Wait for the page to be ready

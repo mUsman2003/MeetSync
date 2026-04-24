@@ -13,7 +13,7 @@
   "minimum_chrome_version": "114",
   "host_permissions": [
     "https://meet.google.com/*",
-    "https://*"
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

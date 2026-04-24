@@ -52,28 +52,50 @@
   }
 
   /**
+   * Returns true only if the extension context is still live.
+   * chrome.runtime.id becomes undefined when the extension is reloaded/unloaded
+   * while a content script is still running in a tab.
+   */
+  function isContextValid() {
+    try {
+      return typeof chrome !== "undefined" &&
+             !!chrome.storage &&
+             !!chrome.runtime &&
+             !!chrome.runtime.id;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
    * @returns {Promise<{ dataId: string, firstSeen: number } | null>}
    */
   async function ensureMeetingMeta(meetingId) {
-    if (!meetingId || typeof chrome === "undefined" || !chrome.storage) return null;
+    if (!meetingId || !isContextValid()) return null;
     var key = metaKeyForMeeting(meetingId);
-    var result = await chrome.storage.local.get(key);
+    var result;
+    try { result = await chrome.storage.local.get(key); }
+    catch (_) { return null; }
     if (result[key]) return result[key];
     var meta = {
       dataId: hash(meetingId + "-" + Date.now().toString(36)),
       firstSeen: Date.now()
     };
-    await chrome.storage.local.set(
-      /** @type {Record<string, unknown>} */ ({ [key]: meta })
-    );
+    try {
+      await chrome.storage.local.set(
+        /** @type {Record<string, unknown>} */ ({ [key]: meta })
+      );
+    } catch (_) { return null; }
     return meta;
   }
 
   async function getMeetingMeta(meetingId) {
-    if (!meetingId || typeof chrome === "undefined" || !chrome.storage) return null;
+    if (!meetingId || !isContextValid()) return null;
     var key = metaKeyForMeeting(meetingId);
-    var result = await chrome.storage.local.get(key);
-    return result[key] || null;
+    try {
+      var result = await chrome.storage.local.get(key);
+      return result[key] || null;
+    } catch (_) { return null; }
   }
 
   /**
@@ -179,30 +201,40 @@
    * @param {Array<{ name: string, avatar?: string, dataId: string, firstSeen: number, lastSeen: number, subname?: string[] }>} roster
    */
   async function saveParticipantRoster(dataId, roster) {
+    if (!isContextValid()) return;
     var k = "P-" + dataId;
-    await chrome.storage.local.set(
-      /** @type {Record<string, unknown>} */ ({ [k]: roster })
-    );
+    try {
+      await chrome.storage.local.set(
+        /** @type {Record<string, unknown>} */ ({ [k]: roster })
+      );
+    } catch (_) {}
   }
 
   async function getParticipantRoster(dataId) {
+    if (!isContextValid()) return [];
     var k = "P-" + dataId;
-    var result = await chrome.storage.local.get(k);
-    return result[k] || [];
+    try {
+      var result = await chrome.storage.local.get(k);
+      return result[k] || [];
+    } catch (_) { return []; }
   }
 
   async function appendEncodedEvents(dataId, participantDataId, newEvents) {
-    if (!newEvents || !newEvents.length) return;
+    if (!newEvents || !newEvents.length || !isContextValid()) return;
     var fullId = "D-" + dataId + "-" + participantDataId;
-    var result = await chrome.storage.local.get(fullId);
+    var result;
+    try { result = await chrome.storage.local.get(fullId); }
+    catch (_) { return; }
     var data = result[fullId] || [];
     var i;
     for (i = 0; i < newEvents.length; i++) {
       data.push(newEvents[i]);
     }
-    await chrome.storage.local.set(
-      /** @type {Record<string, unknown>} */ ({ [fullId]: data })
-    );
+    try {
+      await chrome.storage.local.set(
+        /** @type {Record<string, unknown>} */ ({ [fullId]: data })
+      );
+    } catch (_) {}
   }
 
   /**
@@ -280,7 +312,9 @@
         if (p.lastSeen != null && p.lastSeen > maxLastSeen) maxLastSeen = p.lastSeen;
         if (p.firstSeen != null && p.firstSeen < minFirstSeen) minFirstSeen = p.firstSeen;
         var fullId = "D-" + dataId + "-" + p.dataId;
-        var res = await chrome.storage.local.get(fullId);
+        var res;
+        try { res = await chrome.storage.local.get(fullId); }
+        catch (_) { res = {}; }
         var encoded = res[fullId] || [];
         var k;
         for (k = 0; k < encoded.length; k++) {
@@ -326,7 +360,7 @@
   /** Clear v2 keys for a meeting (used with clear session). */
   async function clearEngagementForMeeting(meetingId) {
     var meta = await getMeetingMeta(meetingId);
-    await chrome.storage.local.remove(metaKeyForMeeting(meetingId));
+    try { await chrome.storage.local.remove(metaKeyForMeeting(meetingId)); } catch (_) {}
     if (!meta) return;
     var dataId = meta.dataId;
     var roster = await getParticipantRoster(dataId);
@@ -335,7 +369,7 @@
     for (j = 0; j < roster.length; j++) {
       toRemove.push("D-" + dataId + "-" + roster[j].dataId);
     }
-    await chrome.storage.local.remove(toRemove);
+    try { await chrome.storage.local.remove(toRemove); } catch (_) {}
   }
 
   global.MeetSyncEngagement = {

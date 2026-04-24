@@ -22,6 +22,10 @@ const warningBanner     = document.getElementById("warningBanner");
 const limitationsBanner = document.getElementById("limitationsBanner");
 const dismissLimitations= document.getElementById("dismissLimitations");
 const syncBtn           = document.getElementById("syncBtn");
+const setupGuideBtn     = document.getElementById("setupGuideBtn");
+const setupModal        = document.getElementById("setupModal");
+const closeSetupModal   = document.getElementById("closeSetupModal");
+const gotItBtn          = document.getElementById("gotItBtn");
 const exportJsonBtn     = document.getElementById("exportJsonBtn");
 const exportCsvBtn      = document.getElementById("exportCsvBtn");
 const clearBtn          = document.getElementById("clearBtn");
@@ -64,6 +68,7 @@ let durationTimer    = null;
 let captionEntries   = [];         // All caption entries for current meeting
 let captionRenderedIds = new Set(); // IDs already rendered in transcription feed
 let captionsActive   = false;      // Whether CC is detected on in the Meet tab
+let localUserName    = null;       // Resolved host name (from content.js via storage)
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────
 
@@ -76,9 +81,37 @@ function getInitials(name) {
     : name.slice(0, 2).toUpperCase();
 }
 
+// Resolve __ME__ / Unknown / You to the real host name if known
+function resolveHostName(name) {
+  if (name === "__ME__" || name === "Unknown" || name === "You" || name === "you") {
+    return localUserName || "Host (You)";
+  }
+  return name;
+}
+
+// Clean message text at render time — strips keepPin/Pin noise from old stored entries
+function cleanDisplayText(text) {
+  if (!text) return text;
+  let c = text.replace(/[\u200B\u200C\u200D\uFEFF]/g, "").trim(); // strip zero-width chars
+
+  // Pass 1: space-separated noise at end
+  c = c.replace(/\s*(?:keep\s*Pin\s*message|Pin\s*message|Unpin\s*message|More\s*options|Remove\s*reaction|Copy\s*link|Reply|Keep|Edit|Delete|Report)\s*$/i, "").trim();
+
+  // Pass 2: concatenated noise (no space before "keep")
+  c = c.replace(/(?:keep\s*Pin\s*message|keepPinmessage|keepPin|Pinmessage)\s*$/i, "").trim();
+
+  // Pass 3: backslash variant ("ahmed\keepPin message")
+  c = c.replace(/\\?\s*keep\s*Pin\s*message\s*$/i, "").trim();
+
+  // Pass 4: catch anything ending with just "Pin message" or "keepPin"
+  c = c.replace(/\s*Pin\s+message\s*$/i, "").trim();
+
+  return c || text; // fallback to original if fully stripped
+}
+
 function getAvatarColor(name) {
-  const colors = ["#4f8ef7","#3ecf8e","#f7c948","#f0605a","#a78bfa",
-                  "#38bdf8","#fb923c","#34d399","#f472b6"];
+  const colors = ["#4361EE","#10B981","#F59E0B","#EF4444","#8B5CF6",
+                  "#06B6D4","#F97316","#22C55E","#EC4899"];
   let h = 0;
   for (let i = 0; i < (name || "").length; i++) h = (h * 31 + name.charCodeAt(i)) % colors.length;
   return colors[Math.abs(h) % colors.length];
@@ -106,6 +139,37 @@ function formatDuration(ms) {
   const sec = s % 60;
   if (h > 0) return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
   return `${m}:${String(sec).padStart(2,"0")}`;
+}
+
+/**
+ * Parse a locale time string (e.g. "8:33:07 PM" or "20:33:07") into epoch ms for today.
+ * Returns null on failure.
+ */
+function parseTimeToMs(timeStr) {
+  if (!timeStr) return null;
+  const clean = timeStr.replace(/\u202F/g, " ").trim();
+  // Try 12-hour format: "8:33:07 PM" or "8:33 PM"
+  const m12 = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const min = parseInt(m12[2], 10);
+    const sec = m12[3] ? parseInt(m12[3], 10) : 0;
+    const ampm = m12[4].toUpperCase();
+    if (ampm === "PM" && h < 12) h += 12;
+    if (ampm === "AM" && h === 12) h = 0;
+    const d = new Date(); d.setHours(h, min, sec, 0);
+    return d.getTime();
+  }
+  // Try 24-hour: "20:33:07" or "20:33"
+  const m24 = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (m24) {
+    const h = parseInt(m24[1], 10);
+    const min = parseInt(m24[2], 10);
+    const sec = m24[3] ? parseInt(m24[3], 10) : 0;
+    const d = new Date(); d.setHours(h, min, sec, 0);
+    return d.getTime();
+  }
+  return null;
 }
 
 function normalizeNameKey(name) {
@@ -136,7 +200,7 @@ function updateStats() {
   statCaptions.textContent  = capCount;
   statAttendees.textContent = attCount;
   statReactions.textContent = String(reactTot);
-  tabAllCount.textContent   = allEntries.length;
+  tabAllCount.textContent   = msgCount; // Only chat messages count in All tab
   tabTranscriptionCount.textContent = capCount;
 }
 
@@ -157,28 +221,79 @@ function buildParticipantsFromEntries(entries) {
   entries.forEach(entry => {
     if (entry.type !== "event" || !entry.participantName) return;
     
-    // Normalize name: "User Name (Meeting host)" -> "User Name"
     const rawName = entry.participantName;
     const cleanNameStr = rawName.replace(/\s+\([^)]+\)\s*$/g, "").trim();
     
-    // Extra validation: skip UI artifacts and timestamps
     if (cleanNameStr.toLowerCase().includes("more_vert")) return;
     if (/\d+ (?:sec|min|hour|day)s? (?:ago|left)/i.test(cleanNameStr)) return;
     
-    if (!participants.has(cleanNameStr)) {
-      participants.set(cleanNameStr, { joinedAt: null, leftAt: null, isPresent: false });
+    let targetKey = cleanNameStr;
+    const lowerClean = cleanNameStr.toLowerCase();
+    for (const key of participants.keys()) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === lowerClean || lowerKey.startsWith(lowerClean) || lowerClean.startsWith(lowerKey)) {
+        if (cleanNameStr.length > key.length) {
+          const data = participants.get(key);
+          participants.delete(key);
+          participants.set(cleanNameStr, data);
+          targetKey = cleanNameStr;
+        } else {
+          targetKey = key;
+        }
+        break;
+      }
     }
-    const p = participants.get(cleanNameStr);
-    if (entry.isJoin) { p.joinedAt = p.joinedAt || entry.timestamp; p.isPresent = true; }
-    if (entry.isLeave) { p.leftAt = entry.timestamp; p.isPresent = false; }
+
+    if (!participants.has(targetKey)) {
+      participants.set(targetKey, { sessions: [], isPresent: false });
+    }
+    const p = participants.get(targetKey);
+    
+    if (entry.isJoin) {
+      const lastSession = p.sessions.length > 0 ? p.sessions[p.sessions.length - 1] : null;
+      // Only push a new session if they don't have an open one
+      if (!lastSession || lastSession.leftAt) {
+        p.sessions.push({ joinedAt: entry.timestamp, leftAt: null });
+      }
+      p.isPresent = true;
+    }
+    
+    if (entry.isLeave) {
+      const lastSession = p.sessions.length > 0 ? p.sessions[p.sessions.length - 1] : null;
+      if (lastSession && !lastSession.leftAt) {
+        // Normal case: close the currently open session
+        lastSession.leftAt = entry.timestamp;
+      } else if (!lastSession) {
+        // Edge case: They left before we ever saw them join
+        p.sessions.push({ joinedAt: null, leftAt: entry.timestamp });
+      }
+      p.isPresent = false;
+    }
   });
 }
 
 function renderAttendees() {
-  // Clear previous attendee cards (keep heading)
   const heading = attendeesPanel.querySelector(".attendees-heading");
   attendeesPanel.innerHTML = "";
   if (heading) attendeesPanel.appendChild(heading);
+
+  if (participants.size === 0 && engagementRows.length > 0) {
+    engagementRows.forEach(row => {
+      const rawName = row.displayName || row.name || "Unknown";
+      const joinedMs = engagementMeta && engagementMeta.firstSeen != null && row.firstSeen != null
+        ? engagementMeta.firstSeen + row.firstSeen : null;
+      const leftMs = engagementMeta && engagementMeta.firstSeen != null && row.lastSeen != null && !row.isPresent
+        ? engagementMeta.firstSeen + row.lastSeen : null;
+      const sessions = [];
+      if (joinedMs || leftMs) {
+        sessions.push({
+          joinedAt: joinedMs ? new Date(joinedMs).toLocaleTimeString() : null,
+          leftAt:   leftMs   ? new Date(leftMs).toLocaleTimeString() : null
+        });
+      }
+      participants.set(rawName, { sessions, isPresent: !!row.isPresent });
+    });
+  }
 
   if (participants.size === 0) {
     attendeesPanel.innerHTML += `
@@ -190,7 +305,6 @@ function renderAttendees() {
     return;
   }
 
-  // Sort: present first, then alphabetical
   const sorted = Array.from(participants.entries())
     .sort(([,a],[,b]) => (b.isPresent - a.isPresent) || 0);
 
@@ -198,33 +312,93 @@ function renderAttendees() {
     const card = document.createElement("div");
     card.className = `attendee-card ${data.isPresent ? "present" : "left"}`;
     
-    // Check if this attendee is "You"
-    const isMe = name.toLowerCase() === "you" || name.includes("(You)");
-    const displayName = isMe ? "Me (Host)" : name;
+    const isMe = name.toLowerCase() === "you" || name.includes("(You)") || name === "__ME__";
+    const displayName = isMe ? (localUserName || "Host (You)") : resolveHostName(name);
     
     const initials = getInitials(name);
     const color    = getAvatarColor(name);
     const eng = findEngagementRow(name);
+
+    // Build the session log HTML
+    const sessions = data.sessions || [];
+    let sessionLogHtml = "";
+    let totalActiveMs = 0;
+    let firstJoinTime = null;
+    let lastEventTime = null;
+
+    sessions.forEach((s, idx) => {
+      const joinStr = s.joinedAt || "—";
+      const leftStr = s.leftAt || (data.isPresent ? "Present" : "—");
+      sessionLogHtml += `<div class="session-row">
+        <span class="session-label">Session ${idx + 1}:</span>
+        <span>Joined ${escapeHtml(joinStr)}</span>
+        <span>→ ${s.leftAt ? "Left " + escapeHtml(leftStr) : escapeHtml(leftStr)}</span>
+      </div>`;
+
+      if (s.joinedAt && !firstJoinTime) firstJoinTime = s.joinedAt;
+      if (s.leftAt) lastEventTime = s.leftAt;
+      if (!s.leftAt && data.isPresent) lastEventTime = new Date().toLocaleTimeString();
+
+      if (s.joinedAt && (s.leftAt || data.isPresent)) {
+        const jt = parseTimeToMs(s.joinedAt);
+        const lt = s.leftAt ? parseTimeToMs(s.leftAt) : Date.now();
+        if (jt && lt && lt > jt) totalActiveMs += (lt - jt);
+      }
+    });
+
+    // Count captions (speaking activity) for this participant
+    const nameLower = name.toLowerCase();
+    const displayNameLower = displayName.toLowerCase();
+    const captionsSpoken = captionEntries.filter(c => {
+      const sp = (c.speaker || "").toLowerCase();
+      return sp && (sp === nameLower || sp === displayNameLower ||
+        sp.includes(nameLower) || nameLower.includes(sp));
+    });
+    const captionCount = captionsSpoken.length;
+
+    // Use caption timestamps to extend activity tracking
+    if (captionsSpoken.length > 0) {
+      const firstCaptionTs = captionsSpoken[0].timestamp;
+      const lastCaptionTs = captionsSpoken[captionsSpoken.length - 1].timestamp;
+      if (!firstJoinTime) firstJoinTime = firstCaptionTs;
+      const lastCaptionMs = parseTimeToMs(lastCaptionTs);
+      const lastEvMs = lastEventTime ? parseTimeToMs(lastEventTime) : 0;
+      if (lastCaptionMs && lastCaptionMs > lastEvMs) lastEventTime = lastCaptionTs;
+    }
+
+    let totalMeetingMs = 0;
+    if (firstJoinTime) {
+      const firstMs = parseTimeToMs(firstJoinTime);
+      const lastMs = lastEventTime ? parseTimeToMs(lastEventTime) : Date.now();
+      if (firstMs && lastMs && lastMs > firstMs) totalMeetingMs = lastMs - firstMs;
+    }
+
+    if (totalActiveMs === 0 && eng && eng.attendanceMs) totalActiveMs = eng.attendanceMs;
+
     const engLine = eng
       ? `<div class="attendee-metrics">
           <span>Msgs: ${eng.chatCount != null ? eng.chatCount : "—"}</span>
           <span>React: ${eng.reactionCount != null ? eng.reactionCount : "—"}</span>
-          <span>Presence: ${eng.attendanceMs != null ? formatDuration(eng.attendanceMs) : "—"}</span>
+          <span>Spoke: ${captionCount}</span>
         </div>`
-      : "";
+      : (captionCount > 0 ? `<div class="attendee-metrics"><span>Spoke: ${captionCount}</span></div>` : "");
+
+    const timeLine = `<div class="attendee-metrics">
+      <span>Active: ${totalActiveMs > 0 ? formatDuration(totalActiveMs) : "—"}</span>
+      <span>Total: ${totalMeetingMs > 0 ? formatDuration(totalMeetingMs) : "—"}</span>
+      <span>Sessions: ${sessions.length || 1}</span>
+    </div>`;
 
     card.innerHTML = `
       <div class="attendee-avatar" style="background:${color}">${escapeHtml(initials)}</div>
       <div class="attendee-info">
         <div class="attendee-name">${escapeHtml(displayName)}</div>
-        <div class="attendee-meta">
-          ${data.joinedAt ? `Joined ${escapeHtml(data.joinedAt)}` : ""}
-          ${data.leftAt   ? ` &middot; Left ${escapeHtml(data.leftAt)}` : ""}
-        </div>
+        ${sessionLogHtml}
         ${engLine}
+        ${timeLine}
       </div>
       <div class="attendee-status ${data.isPresent ? "status-present" : "status-left"}">
-        ${eng && typeof eng.isPresent === "boolean" ? (eng.isPresent ? "Present" : "Left") : (data.isPresent ? "Present" : "Left")}
+        ${data.isPresent ? "Present" : "Left"}
       </div>`;
     attendeesPanel.appendChild(card);
   });
@@ -234,6 +408,8 @@ function renderAttendees() {
 
 function renderEntry(entry) {
   if (renderedIds.has(entry.id)) return;
+  // Skip system join/leave events from the All tab — they belong in Attendees
+  if (entry.type === "event" && activeFilter === "all") return;
   renderedIds.add(entry.id);
 
   const isEvent  = entry.type === "event";
@@ -246,8 +422,7 @@ function renderEntry(entry) {
   const avatarText = isEvent ? "📢" : getInitials(entry.sender);
   const taskBadge  = isTask  ? `<span class="task-badge">⚡ Action</span>` : "";
 
-  const isMe = entry.sender === "You" || entry.sender === "__ME__";
-  const displayName = isMe ? "Me (Host)" : entry.sender;
+  const displayName = resolveHostName(entry.sender || "Unknown");
 
   div.innerHTML = `
     <div class="entry-avatar" style="${avatarBg}">${avatarText}</div>
@@ -257,7 +432,7 @@ function renderEntry(entry) {
         ${taskBadge}
         <span class="entry-time">${escapeHtml(entry.timestamp)}</span>
       </div>
-      <div class="entry-message">${escapeHtml(entry.message)}</div>
+      <div class="entry-message">${escapeHtml(cleanDisplayText(entry.message))}</div>
     </div>`;
 
   feed.appendChild(div);
@@ -326,7 +501,7 @@ function applyFilter() {
   feed.innerHTML = "";
   renderedIds.clear();
 
-  const toShow = allEntries;
+  const toShow = allEntries.filter(e => e.type !== "event"); // Only chat in All tab
 
   if (toShow.length === 0) {
     emptyState.style.display = "flex";
@@ -344,8 +519,7 @@ function applyFilter() {
       const avatarBg   = isEvent ? "" : `background:${getAvatarColor(entry.sender)}`;
       const avatarText = isEvent ? "📢" : getInitials(entry.sender);
       const taskBadge  = isTask  ? `<span class="task-badge">⚡ Action</span>` : "";
-      const isMe = entry.sender === "You" || entry.sender === "__ME__";
-      const displayName = isMe ? "Me (Host)" : entry.sender;
+      const displayName = resolveHostName(entry.sender || "Unknown");
 
       div.innerHTML = `
         <div class="entry-avatar" style="${avatarBg}">${avatarText}</div>
@@ -355,7 +529,7 @@ function applyFilter() {
             ${taskBadge}
             <span class="entry-time">${escapeHtml(entry.timestamp)}</span>
           </div>
-          <div class="entry-message">${escapeHtml(entry.message)}</div>
+          <div class="entry-message">${escapeHtml(cleanDisplayText(entry.message))}</div>
         </div>`;
       feed.appendChild(div);
     });
@@ -407,14 +581,15 @@ function renderCaptionEntry(entry) {
   div.className = "caption-entry";
   div.dataset.id = entry.id;
 
-  const color = getAvatarColor(entry.speaker);
-  const initials = getInitials(entry.speaker);
+  const speaker = entry.speaker ? resolveHostName(entry.speaker) : "Speaker";
+  const color = getAvatarColor(speaker);
+  const initials = getInitials(speaker);
 
   div.innerHTML = `
     <div class="caption-speaker-avatar" style="background:${color}">${escapeHtml(initials)}</div>
     <div class="caption-body">
       <div class="caption-meta">
-        <span class="caption-speaker-name">${escapeHtml(entry.speaker)}</span>
+        <span class="caption-speaker-name">${escapeHtml(speaker)}</span>
         <span class="caption-time">${escapeHtml(entry.timestamp)}</span>
       </div>
       <div class="caption-text">${escapeHtml(entry.text)}</div>
@@ -426,7 +601,54 @@ function renderCaptionEntry(entry) {
 function renderEngagement() {
   if (!engagementTableBody) return;
   engagementTableBody.innerHTML = "";
-  const rows = [...engagementRows];
+
+  // Merge rows that are all the same host identity (__ME__, Unknown, You, host name)
+  const hostAliases = new Set(["__me__", "unknown", "you"]);
+  if (localUserName) hostAliases.add(localUserName.toLowerCase());
+  const mergedMap = new Map();
+
+  // Pre-calculate accurate presence from the attendees map (based on toast events)
+  const truePresenceMap = new Map();
+  participants.forEach((data, name) => {
+    truePresenceMap.set(name.toLowerCase(), data.isPresent);
+  });
+
+  engagementRows.forEach(r => {
+    const rawName = r.name || "";
+    const lower = rawName.toLowerCase();
+    const isHostAlias = hostAliases.has(lower);
+    const mergeKey = isHostAlias ? "__HOST__" : lower;
+
+    // Use toast events if available, otherwise fallback to engagement tracker.
+    // The host is always assumed to be present.
+    let truePresence = r.isPresent;
+    if (isHostAlias) {
+      truePresence = true;
+    } else {
+      const matchKey = Array.from(truePresenceMap.keys()).find(k => 
+        k === lower || 
+        k === resolveHostName(rawName).toLowerCase() ||
+        lower.startsWith(k) || 
+        k.startsWith(lower)
+      );
+      if (matchKey) truePresence = truePresenceMap.get(matchKey);
+    }
+
+    if (!mergedMap.has(mergeKey)) {
+      mergedMap.set(mergeKey, { ...r, name: isHostAlias ? (localUserName || "Host (You)") : rawName, isPresent: truePresence });
+    } else {
+      const existing = mergedMap.get(mergeKey);
+      existing.chatCount = (existing.chatCount || 0) + (r.chatCount || 0);
+      existing.reactionCount = (existing.reactionCount || 0) + (r.reactionCount || 0);
+      existing.attendanceMs = Math.max(existing.attendanceMs || 0, r.attendanceMs || 0);
+      if (truePresence) existing.isPresent = true;
+      if (r.firstSeen != null && (existing.firstSeen == null || r.firstSeen < existing.firstSeen)) {
+        existing.firstSeen = r.firstSeen;
+      }
+    }
+  });
+
+  const rows = [...mergedMap.values()];
   const key = engagementSortKey;
   const dir = engagementSortDir;
   rows.sort((a, b) => {
@@ -456,8 +678,7 @@ function renderEngagement() {
 
   rows.forEach((r) => {
     const tr = document.createElement("tr");
-    // Compute join time from meta.firstSeen + row.firstSeen offset
-    let joinedStr = "—";
+    let joinedStr = "\u2014";
     if (engagementMeta && engagementMeta.firstSeen != null && r.firstSeen != null) {
       const joinedAt = new Date(engagementMeta.firstSeen + r.firstSeen);
       joinedStr = joinedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -471,8 +692,9 @@ function renderEngagement() {
       activeMins = "active";
     }
     const st = r.isPresent ? "✅ Present" : "Left";
+    const displayName = resolveHostName(r.name || "");
     tr.innerHTML = `
-      <td class="eng-name">${escapeHtml(r.name || "")}</td>
+      <td class="eng-name">${escapeHtml(displayName)}</td>
       <td>${r.chatCount != null ? r.chatCount : 0}</td>
       <td>${r.reactionCount != null ? r.reactionCount : 0}</td>
       <td>${joinedStr}</td>
@@ -573,10 +795,36 @@ async function loadCurrentSession() {
   captionEntries = capResult[capKey] || [];
   captionRenderedIds.clear();
 
+  // Load the local host name so we can resolve __ME__/Unknown/You
+  const nameResult = await chrome.storage.local.get("localUserName");
+  if (nameResult.localUserName) localUserName = nameResult.localUserName;
+
   buildParticipantsFromEntries(allEntries);
   await loadEngagementData();
   clearFeed();
   applyFilter();
+
+  // Bug fix 1: If we're joining a live meeting mid-way, trigger a content
+  // script re-scan so any already-rendered chat is captured immediately.
+  if (meetingId) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.url && tab.url.startsWith("https://meet.google.com/")) {
+        await chrome.tabs.sendMessage(tab.id, { type: "MANUAL_SCAN" }).catch(() => {});
+        // Re-load storage after the scan so newly captured entries appear
+        setTimeout(async () => {
+          const r2 = await chrome.storage.local.get(key);
+          const fresh = r2[key] || [];
+          if (fresh.length > allEntries.length) {
+            allEntries = fresh;
+            buildParticipantsFromEntries(allEntries);
+            clearFeed();
+            applyFilter();
+          }
+        }, 2500);
+      }
+    } catch (_) {}
+  }
 }
 
 // ─── Background Connection ────────────────────────────────────────────────
@@ -697,9 +945,16 @@ function buildSummary() {
     actionItemCount:  allEntries.filter(e => e.isTask).length,
     eventCount:       allEntries.filter(e => e.type === "event").length,
     participantCount: participants.size,
-    participants:     Array.from(participants.entries()).map(([name, d]) => ({
-      name: cleanDisplayName(name), joinedAt: d.joinedAt, leftAt: d.leftAt, isPresent: d.isPresent
-    })),
+    participants:     Array.from(participants.entries()).map(([name, d]) => {
+      const sessions = (d.sessions || []).map(s => ({
+        joinedAt: s.joinedAt || null, leftAt: s.leftAt || null
+      }));
+      return {
+        name: cleanDisplayName(name),
+        sessions,
+        isPresent: d.isPresent
+      };
+    }),
     actionItems: allEntries.filter(e => e.isTask).map(e => ({
       sender: cleanDisplayName(e.sender), message: e.message, timestamp: e.timestamp
     })),
@@ -726,7 +981,7 @@ function downloadBlob(content, filename, mimeType) {
 }
 
 async function exportJSON() {
-  if (!activeMeetingId || !allEntries.length) { setStatus("warning", "No data to export."); return; }
+  if (!activeMeetingId || (!allEntries.length && !captionEntries.length)) { setStatus("warning", "No data to export."); return; }
   const summary   = buildSummary();
   let engagementV2 = null;
   if (typeof MeetSyncEngagement !== "undefined") {
@@ -746,25 +1001,58 @@ async function exportJSON() {
 }
 
 async function exportCSV() {
-  if (!activeMeetingId || !allEntries.length) { setStatus("warning", "No data to export."); return; }
+  if (!activeMeetingId || (!allEntries.length && !captionEntries.length)) { setStatus("warning", "No data to export."); return; }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const header    = "Type,Timestamp,Sender,Message,IsActionItem,CapturedAt\r\n";
-  const rows      = allEntries.map(e => {
-    const msg    = `"${(e.message    || "").replace(/"/g,'""')}"`;
-    // Clean up sender name
-    let s = e.sender || "Participant";
-    if (s === "Unknown") s = "Participant";
+
+  // Chat messages section
+  let csv = "CHAT MESSAGES\r\n";
+  csv += "Type,Timestamp,Sender,Message,IsActionItem,CapturedAt\r\n";
+  const chatOnly = allEntries.filter(e => e.type === "chat");
+  chatOnly.forEach(e => {
+    const msg    = `"${cleanDisplayText(e.message || "").replace(/"/g,'""')}"`;
+    let s = resolveHostName(e.sender || "Participant");
     s = s.replace(/\s+\([^)]+\)\s*$/g, "").trim();
     const sender = `"${s.replace(/"/g,'""')}"`;
-
     const capAt  = `"${(e.capturedAt || "").replace(/"/g,'""')}"`;
-    return `${e.type},"${e.timestamp}",${sender},${msg},${e.isTask ? "TRUE" : "FALSE"},${capAt}`;
+    csv += `${e.type},"${e.timestamp}",${sender},${msg},${e.isTask ? "TRUE" : "FALSE"},${capAt}\r\n`;
   });
-  let csv = header + rows.join("\r\n");
+
+  // Transcript/Captions section
+  if (captionEntries.length > 0) {
+    csv += "\r\nTRANSCRIPT\r\n";
+    csv += "Timestamp,Speaker,CaptionText\r\n";
+    captionEntries.forEach(c => {
+      const speaker = resolveHostName(c.speaker || "Speaker");
+      const text = `"${(c.text || "").replace(/"/g, '""')}"`;
+      csv += `"${c.timestamp}","${speaker.replace(/"/g, '""')}",${text}\r\n`;
+    });
+  }
+
+  // Attendees section
+  if (participants.size > 0) {
+    csv += "\r\nATTENDEES\r\n";
+    csv += "Name,Status,Sessions,TotalActiveMins\r\n";
+    participants.forEach((data, name) => {
+      const displayName = resolveHostName(name);
+      const sessions = data.sessions || [];
+      let totalActiveMs = 0;
+      sessions.forEach(s => {
+        if (s.joinedAt && (s.leftAt || data.isPresent)) {
+          const jt = parseTimeToMs(s.joinedAt);
+          const lt = s.leftAt ? parseTimeToMs(s.leftAt) : Date.now();
+          if (jt && lt && lt > jt) totalActiveMs += (lt - jt);
+        }
+      });
+      const sessionsStr = sessions.map((s, i) => `Session ${i+1}: ${s.joinedAt || "?"}-${s.leftAt || "Present"}`).join("; ");
+      csv += `"${displayName.replace(/"/g, '""')}",${data.isPresent ? "Present" : "Left"},"${sessionsStr}",${(totalActiveMs / 60000).toFixed(1)}\r\n`;
+    });
+  }
+
+  // Engagement section
   if (typeof MeetSyncEngagement !== "undefined") {
     try {
       const eng = await MeetSyncEngagement.loadEngagementSummary(activeMeetingId);
-      csv += "\r\n\r\nENGAGEMENT_SUMMARY\r\n";
+      csv += "\r\nENGAGEMENT_SUMMARY\r\n";
       csv += "Name,ChatCount,ReactionCount,AttendanceMs,IsPresent\r\n";
       (eng.participants || []).forEach((p) => {
         const name = `"${(p.name || "").replace(/"/g, '""')}"`;
@@ -817,6 +1105,12 @@ async function manualSync() {
 }
 
 syncBtn.addEventListener("click", manualSync);
+setupGuideBtn.addEventListener("click", () => setupModal.classList.add("visible"));
+closeSetupModal.addEventListener("click", () => setupModal.classList.remove("visible"));
+gotItBtn.addEventListener("click", () => setupModal.classList.remove("visible"));
+setupModal.addEventListener("click", (e) => {
+  if (e.target === setupModal) setupModal.classList.remove("visible");
+});
 exportJsonBtn.addEventListener("click", exportJSON);
 exportCsvBtn.addEventListener("click", exportCSV);
 clearBtn.addEventListener("click", clearSession);
@@ -824,8 +1118,20 @@ clearBtn.addEventListener("click", clearSession);
 // ─── Init ─────────────────────────────────────────────────────────────────
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !activeMeetingId) return;
+  if (area !== "local") return;
   const keys = Object.keys(changes);
+
+  // Bug fix 2: If the active meeting changes (user switched meetings),
+  // fully reload the popup so it shows fresh data for the new session.
+  if (keys.includes("activeMeetingId")) {
+    const newId = changes.activeMeetingId.newValue;
+    if (newId !== activeMeetingId) {
+      void loadCurrentSession();
+      return;
+    }
+  }
+
+  if (!activeMeetingId) return;
   const metaKey = "meetms_meta_" + activeMeetingId;
   const hit = keys.some(
     (k) => k === metaKey || k.startsWith("P-") || k.startsWith("D-")
