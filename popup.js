@@ -836,17 +836,19 @@ function connectBackground() {
     switch (msg.type) {
       case "NEW_ENTRY":
         if (!msg.entry || !msg.entry.id) break;
-        allEntries.push(msg.entry);
-        // Update participant map if it's a join/leave event
+        // Feed and count updates are handled exclusively by storage.onChanged
+        // (which fires reliably even when the service worker is idle).
+        // Here we only handle side effects that need to happen immediately:
         if (msg.entry.type === "event" && msg.entry.participantName) {
-          buildParticipantsFromEntries(allEntries);
-          if (activeFilter === "attendees") renderAttendees();
+          // Attendee join/leave — rebuild participant map
+          // (storage.onChanged will add the entry to allEntries first;
+          //  we use a tiny delay so allEntries is already updated)
+          setTimeout(() => {
+            buildParticipantsFromEntries(allEntries);
+            if (activeFilter === "attendees") renderAttendees();
+          }, 150);
         }
         if (msg.entry.type === "chat") void loadEngagementData();
-        if (activeFilter !== "attendees" && activeFilter !== "engagement") {
-          renderEntries([msg.entry]);
-        }
-        updateStats();
         break;
 
       case "CHAT_PANEL_STATE":
@@ -1121,8 +1123,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   const keys = Object.keys(changes);
 
-  // Bug fix 2: If the active meeting changes (user switched meetings),
-  // fully reload the popup so it shows fresh data for the new session.
+  // If the active meeting changes, fully reload for the new session.
   if (keys.includes("activeMeetingId")) {
     const newId = changes.activeMeetingId.newValue;
     if (newId !== activeMeetingId) {
@@ -1132,6 +1133,33 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 
   if (!activeMeetingId) return;
+
+  // ── Primary feed/count update path ────────────────────────────────────────
+  // storage.onChanged is the SINGLE source that adds entries to allEntries
+  // and updates the feed. This fires reliably in the side-panel context even
+  // when the service worker is idle, making it more reliable than port messages.
+  const meetKey = `meet_${activeMeetingId}`;
+  if (keys.includes(meetKey)) {
+    const allStorageEntries = changes[meetKey].newValue || [];
+    // Build a set of IDs already tracked to prevent any double-add
+    const existingIds = new Set(allEntries.map(e => e.id));
+    const addedEntries = allStorageEntries.filter(e => !existingIds.has(e.id));
+    if (addedEntries.length > 0) {
+      addedEntries.forEach(e => allEntries.push(e));
+      // Render new entries in the All tab (not engagement/attendees/transcription)
+      if (activeFilter !== "attendees" && activeFilter !== "engagement" && activeFilter !== "transcription") {
+        renderEntries(addedEntries);
+      }
+      // If any are join/leave events, update attendee panel too
+      if (addedEntries.some(e => e.type === "event")) {
+        buildParticipantsFromEntries(allEntries);
+        if (activeFilter === "attendees") renderAttendees();
+      }
+      updateStats();
+    }
+  }
+
+  // Reload engagement data when engagement keys change
   const metaKey = "meetms_meta_" + activeMeetingId;
   const hit = keys.some(
     (k) => k === metaKey || k.startsWith("P-") || k.startsWith("D-")

@@ -462,13 +462,23 @@
   async function saveEntry(entry) {
     try {
       if (!extensionContextValid || !isExtensionApiAvailable()) return;
+
+      // ── Synchronous dedup guard (BEFORE any await) ─────────────────────────
+      // Two scans can fire within milliseconds of each other. If we check
+      // seenIds after an await, both calls pass the check before either
+      // completes the async storage write — causing duplicates.
+      // By guarding synchronously here, the second concurrent call is rejected
+      // immediately without waiting for storage at all.
+      if (seenIds.has(entry.id)) return;
+      seenIds.add(entry.id); // claim the ID now, synchronously
+
       const key = `meet_${currentMeetingId}`;
       const result = await chrome.storage.local.get([key, "activeMeetingId"]);
       const existing = result[key] || [];
 
-      // Double-check dedup before saving
-      if (seenIds.has(entry.id)) return;
-      seenIds.add(entry.id);
+      // Storage-level dedup (handles the case where the extension restarted
+      // and seenIds was cleared but the entry already exists in storage)
+      if (existing.some(e => e.id === entry.id)) return;
 
       existing.push(entry);
       await chrome.storage.local.set({
@@ -1006,26 +1016,36 @@
    * Handles grouped messages (multiple messages under one sender).
    */
   function scanChatMessages() {
-    const chatPanel = document.querySelector(
-      '[aria-label*="chat" i][role="complementary"], [data-panel-type="chat"]'
+    // Strategy 1: Look for the chat textarea (most reliable panel indicator as of 2025)
+    // When the chat panel is open, a textarea with aria-label "Send a message" is present.
+    const chatTextarea = document.querySelector(
+      'textarea[aria-label*="message" i], [contenteditable][aria-label*="message" i], [data-is-chat-input]'
     );
-    if (!chatPanel) return;
+    // Strategy 2: Look for the Ss4fHf group container that holds message groups
+    const hasMsgGroups = document.querySelector('.Ss4fHf');
+    // Strategy 3: Legacy panel selector (may no longer work but kept as fallback)
+    const legacyPanel = document.querySelector('[aria-label*="chat" i][role="complementary"]');
 
-    const chatList = chatPanel.querySelector('[aria-label*="chat messages" i], [role="log"], [role="list"]') || chatPanel;
+    const chatIsOpen = !!(chatTextarea || hasMsgGroups || legacyPanel);
+    if (!chatIsOpen) return;
 
-    // Every single message bubble in Google Meet has a [data-message-id] attribute.
-    const msgBubbles = Array.from(chatList.querySelectorAll('[data-message-id]'));
-
+    // Primary: data-message-id bubbles (confirmed still present in 2025 Meet)
+    const msgBubbles = Array.from(document.querySelectorAll('[data-message-id]'));
     if (msgBubbles.length > 0) {
-      msgBubbles.forEach((bubble) => {
-        extractFromBubble(bubble);
-      });
+      msgBubbles.forEach((bubble) => extractFromBubble(bubble));
       return;
     }
 
-    // Absolute fallback if Google removes data-message-id
-    const msgBlocks = chatPanel.querySelectorAll('[role="listitem"], [data-is-bot-message]');
-    msgBlocks.forEach((block, idx) => extractFromBubble(block, idx));
+    // Fallback: scan Ss4fHf groups for any message-like children
+    const groups = document.querySelectorAll('.Ss4fHf');
+    if (groups.length > 0) {
+      let idx = 0;
+      groups.forEach(group => {
+        group.querySelectorAll('[role="listitem"], [data-is-bot-message]').forEach(block => {
+          extractFromBubble(block, idx++);
+        });
+      });
+    }
   }
 
   function extractFromBubble(bubble, fallbackIdx = 0) {
@@ -1033,14 +1053,34 @@
     
     // 1. Find Author
     let authorRaw = "";
-    // If it's another person's message, it will be grouped inside a .Ss4fHf container with a sender name
+    // Messages from others are grouped inside .Ss4fHf with a sender name header
     const parentGroup = bubble.closest('.Ss4fHf');
     if (parentGroup) {
-      const authorEl = parentGroup.querySelector(".poVWob, .mNHP2e, [data-sender-name]");
-      authorRaw = authorEl ? (authorEl.textContent || "").replace(/\u202F/g, " ").trim() : "";
-      
+      // Priority 1: data-sender-name attribute (confirmed stable in 2025 Meet DOM)
+      const bySenderAttr = parentGroup.querySelector('[data-sender-name]');
+      if (bySenderAttr) {
+        authorRaw = (bySenderAttr.getAttribute('data-sender-name') || bySenderAttr.textContent || '')
+          .replace(/\u202F/g, ' ').trim();
+      }
+
+      // Priority 2: known sender name classes (may still work on some Meet versions)
       if (!authorRaw) {
-        const aria = (parentGroup.getAttribute("aria-label") || "").replace(/\u202F/g, " ").trim();
+        const byClass = parentGroup.querySelector('.poVWob, .mNHP2e, .zg9pAb');
+        if (byClass) authorRaw = (byClass.textContent || '').replace(/\u202F/g, ' ').trim();
+      }
+
+      // Priority 3: avatar img alt text (Meet sets alt to person's name)
+      if (!authorRaw) {
+        const avatarImg = parentGroup.querySelector('img[alt]');
+        if (avatarImg) {
+          const alt = (avatarImg.getAttribute('alt') || '').trim();
+          if (alt && alt.length >= 2 && alt.length < 60 && !isNoise(alt)) authorRaw = alt;
+        }
+      }
+
+      // Priority 4: aria-label on the group (e.g. "Ahmed 7:45 PM message text")
+      if (!authorRaw) {
+        const aria = (parentGroup.getAttribute('aria-label') || '').replace(/\u202F/g, ' ').trim();
         if (aria) {
           const timeIdx = aria.search(/\d{1,2}:\d{2}/);
           if (timeIdx > 0) authorRaw = aria.slice(0, timeIdx).trim();
@@ -1063,14 +1103,36 @@
 
     // 3. Extract Text
     let rawText = "";
-    const textNode = bubble.querySelector('[data-message-text], [jsname="W297wb"], span[dir="ltr"], span[dir="auto"]');
-    if (textNode) {
-      // Prefer clean text extraction avoiding button overlays
-      rawText = (textNode.textContent || "").replace(/\u202F/g, " ").trim();
-    } else {
-      rawText = getCleanMessageText(bubble);
-      if (!rawText) rawText = (bubble.textContent || "").replace(/\u202F/g, " ").trim();
+
+    // Priority 1: jsname="dTKtvb" — confirmed message text container in 2025 Meet
+    const byDtktvb = bubble.querySelector('[jsname="dTKtvb"]');
+    if (byDtktvb) {
+      rawText = (byDtktvb.textContent || '').replace(/\u202F/g, ' ').trim();
     }
+
+    // Priority 2: data-message-text attribute
+    if (!rawText) {
+      const byAttr = bubble.querySelector('[data-message-text]');
+      if (byAttr) rawText = (byAttr.textContent || '').replace(/\u202F/g, ' ').trim();
+    }
+
+    // Priority 3: old jsname (W297wb) — kept for older Meet versions
+    if (!rawText) {
+      const byOldJsname = bubble.querySelector('[jsname="W297wb"]');
+      if (byOldJsname) rawText = (byOldJsname.textContent || '').replace(/\u202F/g, ' ').trim();
+    }
+
+    // Priority 4: span with dir attribute (ltr/rtl/auto)
+    if (!rawText) {
+      const dirSpan = bubble.querySelector('span[dir="ltr"], span[dir="rtl"], span[dir="auto"]');
+      if (dirSpan) rawText = (dirSpan.textContent || '').replace(/\u202F/g, ' ').trim();
+    }
+
+    // Priority 5: getCleanMessageText helper (strips button overlays)
+    if (!rawText) rawText = getCleanMessageText(bubble);
+
+    // Priority 6: full textContent fallback
+    if (!rawText) rawText = (bubble.textContent || '').replace(/\u202F/g, ' ').trim();
 
     const text = cleanMessageText(rawText, author);
     if (!text) return;
@@ -1203,8 +1265,10 @@
     const chatList = document.querySelector(
       '[aria-label*="chat messages" i], [role="list"][aria-label*="chat" i]'
     );
+    // Also check for the Ss4fHf message group — present whenever chat panel is open
+    const hasMsgGroup = !!document.querySelector('.Ss4fHf');
 
-    const isOpen = !!(chatInput || chatList);
+    const isOpen = !!(chatInput || chatList || hasMsgGroup);
 
     if (isOpen !== chatPanelOpen) {
       chatPanelOpen = isOpen;

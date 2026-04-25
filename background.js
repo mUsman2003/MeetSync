@@ -205,20 +205,9 @@ async function exportSession(meetingId, format = "json") {
 // ─── Tab Tracking ─────────────────────────────────────────────────────────
 
 /**
- * Inject the content script when a Meet tab is navigated to.
- * (Handles cases where the extension was installed mid-session.)
+ * NOTE: content.js is already declared in manifest.json under content_scripts
+ * and is injected automatically by Chrome. We do NOT re-inject it here via
+ * scripting.executeScript — doing so would create a second copy of content.js
+ * in the same tab, each with its own seenIds Set, causing every message to be
+ * saved and counted twice.
  */
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (
-    changeInfo.status === "complete" &&
-    tab.url &&
-    tab.url.startsWith("https://meet.google.com/")
-  ) {
-    chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["engagementStore.js", "content.js"]
-    }).catch(() => {
-      // Script may already be injected — safe to ignore
-    });
-  }
-});
